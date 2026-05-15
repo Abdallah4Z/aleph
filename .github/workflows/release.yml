@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev libxdo-dev libx11-dev protobuf-compiler
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release --bin aleph
+
+      - name: Create tarball
+        run: |
+          mkdir -p aleph-x86_64-linux
+          cp target/release/aleph aleph-x86_64-linux/
+          cp install.sh aleph-x86_64-linux/
+          tar czf aleph-x86_64-linux.tar.gz aleph-x86_64-linux/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: aleph-x86_64-linux.tar.gz
+          generate_release_notes: true
