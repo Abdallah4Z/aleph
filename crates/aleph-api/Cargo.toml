@@ -16,3 +16,4 @@ axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+chrono = { workspace = true }

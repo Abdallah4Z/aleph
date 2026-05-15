@@ -75,6 +75,19 @@ fn default_top_k() -> usize {
     5
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskRequest {
+    pub question: String,
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskResponse {
+    pub answer: String,
+    pub sources: Vec<SourceMetadata>,
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard / Stats models
 // ---------------------------------------------------------------------------

@@ -25,6 +25,8 @@ tokenizers = "0.21"
 
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
+ureq = { version = "3", features = ["json"] }
+
 lancedb = { version = "0.18", optional = true }
 arrow-array = { version = "54", optional = true }
 arrow-schema = { version = "54", optional = true }

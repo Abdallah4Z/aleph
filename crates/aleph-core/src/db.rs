@@ -358,6 +358,28 @@ impl Database {
             RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type }
         }).collect())
     }
+
+    /// Keyword search over window titles and app names (case-insensitive).
+    /// Returns up to `limit` matching events ordered by recency.
+    pub async fn keyword_search(&self, query: &str, limit: i64) -> Result<Vec<RecentEvent>> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: i64, app_name: String, window_title: String, start_time: i64, end_time: Option<i64>, source_type: String }
+        let pattern = format!("%{}%", query);
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT id, app_name, window_title, start_time, end_time, source_type
+             FROM context_events
+             WHERE window_title LIKE ?1 OR app_name LIKE ?1
+             ORDER BY start_time DESC LIMIT ?2",
+        )
+        .bind(&pattern)
+        .bind(limit)
+        .fetch_all(&self.sqlite)
+        .await?;
+        Ok(rows.into_iter().map(|r| {
+            let duration_ms = r.end_time.unwrap_or(r.start_time) - r.start_time;
+            RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type }
+        }).collect())
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ use axum::{
 };
 use std::borrow::Cow;
 use aleph_core::{
-    models::{QueryRequest, QueryResponse, OverviewStats, HourlyStat, DailyStat, AppStat, WindowStat, RecentEvent},
+    models::{QueryRequest, QueryResponse, OverviewStats, HourlyStat, DailyStat, AppStat, WindowStat, RecentEvent, AskRequest, AskResponse, SourceMetadata},
     Config, Database, TextEncoder,
 };
 use std::net::SocketAddr;
@@ -60,6 +60,7 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
         .route("/api/stats/windows", get(stats_windows))
         .route("/api/stats/recent", get(stats_recent))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/ask", post(ask_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -98,6 +99,82 @@ async fn query_handler(
     })?;
 
     Ok(Json(response))
+}
+
+// ---------------------------------------------------------------------------
+// Ask handler — keyword search + LLM answer with sources
+// ---------------------------------------------------------------------------
+
+async fn ask_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AskRequest>,
+) -> Result<Json<AskResponse>, StatusCode> {
+    let results = state.db.keyword_search(&req.question, req.top_k as i64).await.map_err(|e| {
+        error!("Keyword search failed: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    if results.is_empty() {
+        return Ok(Json(AskResponse {
+            answer: "No matching context found in your desktop history.".into(),
+            sources: vec![],
+        }));
+    }
+
+    // Format context for LLM
+    let mut context_lines = Vec::new();
+    for ev in &results {
+        let start = chrono::DateTime::from_timestamp_millis(ev.start_time)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| "unknown".into());
+        let dur = if ev.duration_ms > 0 {
+            format!(" ({}s)", ev.duration_ms / 1000)
+        } else {
+            String::new()
+        };
+        context_lines.push(format!(
+            "- [{}] App: {}, Window: \"{}\"{}{}",
+            start, ev.app_name, ev.window_title, dur,
+            if ev.source_type == "vision" { "" } else { "" }
+        ));
+    }
+
+    let context_text = context_lines.join("\n");
+    let system_prompt = "You are Aleph, a desktop context assistant. \
+        Below is the user's recent desktop activity history. \
+        Answer the user's question based ONLY on this context. \
+        Be specific — mention app names, window titles, and timestamps. \
+        If the context doesn't contain enough information, say so.";
+
+    let user_prompt = format!(
+        "My desktop activity (most relevant first):\n{}\n\nQuestion: {}",
+        context_text, req.question
+    );
+
+    let config = Config::global();
+    let answer = match aleph_core::llm::ask_llm(config, system_prompt, &user_prompt) {
+        Ok(a) => a,
+        Err(e) => {
+            // Fallback to just returning the raw context
+            let lines: Vec<String> = results.iter().map(|ev| {
+                let start = chrono::DateTime::from_timestamp_millis(ev.start_time)
+                    .map(|dt| dt.format("%H:%M").to_string()).unwrap_or_default();
+                format!("{} | {} — {} ({}s)", start, ev.app_name, ev.window_title, ev.duration_ms / 1000)
+            }).collect();
+            format!("LLM unavailable ({}). Raw context:\n{}", e, lines.join("\n"))
+        }
+    };
+
+    let sources: Vec<SourceMetadata> = results.into_iter().map(|ev| SourceMetadata {
+        id: ev.id,
+        app_name: ev.app_name,
+        window_title: ev.window_title,
+        start_time: ev.start_time,
+        end_time: ev.end_time,
+        source_type: ev.source_type,
+    }).collect();
+
+    Ok(Json(AskResponse { answer, sources }))
 }
 
 const DASHBOARD_HTML: &str = include_str!("../../../dashboard/index.html");

@@ -4,6 +4,7 @@ pub mod embedding;
 pub mod dedup;
 pub mod db;
 pub mod config;
+pub mod llm;
 
 pub use models::*;
 pub use extractor::*;

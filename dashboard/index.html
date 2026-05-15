@@ -359,38 +359,42 @@ async function searchContext() {
   const query = $('searchInput').value.trim();
   const container = $('searchResults');
   if (!query) { container.classList.add('hidden'); return; }
-  container.innerHTML = '<div class="chart-card p-6"><div class="text-gray-500 text-center py-4">Searching...</div></div>';
+  container.innerHTML = '<div class="chart-card p-6"><div class="text-gray-500 text-center py-4">Searching your desktop history...</div></div>';
   container.classList.remove('hidden');
   try {
-    const data = await (await fetch('/query', {
+    const data = await (await fetch('/api/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: query, top_k: 10 })
+      body: JSON.stringify({ question: query, top_k: 8 })
     })).json();
-    if (!data.context || data.context.length === 0) {
-      container.innerHTML = '<div class="chart-card p-6"><div class="text-gray-500 text-center py-4">No matching context found</div></div>';
+    if (!data.answer) {
+      container.innerHTML = '<div class="chart-card p-6"><div class="text-gray-500 text-center py-4">No response</div></div>';
       return;
     }
+    const answerHtml = data.answer.split('\n').map(l => esc(l)).join('<br>');
+    const sourcesHtml = (data.sources || []).map(s => {
+      const t = new Date(s.start_time);
+      const time = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return `<div class="timeline-item flex items-center gap-2 py-1.5 px-3 my-1">
+        <span class="timeline-dot ${s.source_type === 'text' ? 'bg-accent' : 'bg-purple'}"></span>
+        <span class="text-xs text-gray-600">${time}</span>
+        <span class="text-sm font-medium text-gray-200">${esc(s.app_name)}</span>
+        <span class="text-sm text-gray-500 truncate">${esc(s.window_title)}</span>
+      </div>`;
+    }).join('');
     container.innerHTML = `
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Search Results</h2>
-        <button onclick="$('searchResults').classList.add('hidden')" class="text-xs text-gray-600 hover:text-gray-400">Close</button>
-      </div>
-      ${data.context.map(c => {
-        const dur = c.metadata.end_time ? formatDuration(c.metadata.end_time - c.metadata.start_time) : '—';
-        const time = new Date(c.metadata.start_time).toLocaleString();
-        return `<div class="timeline-item mb-2">
-          <div class="flex items-center justify-between gap-2 mb-1">
-            <div class="flex items-center gap-2">
-              <span class="timeline-dot bg-accent"></span>
-              <span class="badge badge-text">${esc(c.metadata.source_type)}</span>
-              <span class="text-sm font-medium text-gray-200">${esc(c.metadata.app_name)}</span>
-              <span class="text-xs text-gray-700 font-mono">${c.score.toFixed(3)}</span>
-            </div>
-            <span class="text-xs text-gray-600">${time}</span>
+      <div class="chart-card p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Answer</h2>
+          <button onclick="$('searchResults').classList.add('hidden')" class="text-xs text-gray-600 hover:text-gray-400">Close</button>
+        </div>
+        <div class="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">${answerHtml}</div>
+        ${data.sources && data.sources.length > 0 ? `
+          <div class="mt-4 pt-3 border-t border-border">
+            <div class="text-xs text-gray-600 font-medium uppercase tracking-wider mb-2">Sources</div>
+            ${sourcesHtml}
           </div>
-          <div class="text-sm text-gray-500 truncate pl-4">${esc(c.metadata.window_title)}</div>
-        </div>`;
-      }).join('')}`;
+        ` : ''}
+      </div>`;
   } catch(e) {
     container.innerHTML = `<div class="chart-card p-6"><div class="text-red-400 text-center py-4">${esc(e.message)}</div></div>`;
   }
