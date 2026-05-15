@@ -1,18 +1,3 @@
-//! Speech interface: "Hey Aleph" — wake word, STT, query, TTS.
-//!
-//! Captures microphone audio, runs speech-to-text, queries the Aleph API,
-//! and optionally speaks the response.
-//!
-//! ## STT backends (in priority order):
-//!   1. `whisper-cli` — if `whisper-cli` is in PATH
-//!   2. `moonshine` — if a moonshine binary is configured
-//!   3. Manual text input — fallback
-//!
-//! ## TTS backends:
-//!   1. `espeak-ng` — if installed (fast, robotic but works)
-//!   2. `kitten-tts` — if configured (requires ONNX model)
-//!   3. Print to terminal — fallback
-
 use anyhow::Result;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -20,204 +5,182 @@ use std::time::Duration;
 
 const API_BASE: &str = "http://127.0.0.1:2198";
 
-/// Main loop: listen → STT → ask → TTS
-pub fn run_listen_loop() -> Result<()> {
-    println!("  Aleph Listening Mode");
-    println!("  Say \"hey aleph\" or press Enter to type a query");
-    println!("  Press Ctrl+C to exit\n");
-
-    loop {
-        // Detect wake word or manual input
-        let query = match capture_query() {
-            Ok(q) if !q.is_empty() => q,
-            _ => {
-                std::thread::sleep(Duration::from_secs(1));
-                continue;
-            }
-        };
-
-        println!("\n  Query: {}", query);
-
-        // Ask the API
-        let answer = match ask_aleph(&query) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("  Error: {}", e);
-                continue;
-            }
-        };
-
-        println!("  Answer: {}\n", answer);
-
-        // Speak the response
-        speak(&answer);
+fn script_path(name: &str) -> String {
+    let myself = std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let candidates = vec![
+        myself.join(name),
+        std::path::PathBuf::from("/usr/local/lib/aleph").join(name),
+        std::path::PathBuf::from("/home/abdallah/Aleph/scripts").join(name),
+    ];
+    for p in &candidates {
+        if p.exists() { return p.to_string_lossy().to_string(); }
     }
+    name.into()
 }
 
-fn capture_query() -> Result<String> {
-    // Try whisper-cli first
-    if let Ok(text) = capture_with_whisper() {
-        return Ok(text);
-    }
-
-    // Try moonshine if configured
-    if let Ok(text) = capture_with_moonshine() {
-        return Ok(text);
-    }
-
-    // Fallback: read from stdin
-    print!("  > ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
-
-fn capture_with_whisper() -> Result<String> {
-    // Check if whisper-cli is available
-    if Command::new("whisper-cli").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
-        anyhow::bail!("whisper-cli not found");
-    }
-
-    // Record audio to temp file
-    let tmp_dir = std::env::temp_dir();
-    let wav_path = tmp_dir.join("aleph_query.wav");
-    record_audio(&wav_path, 5)?; // Record 5 seconds
-
-    // Run whisper-cli
-    let output = Command::new("whisper-cli")
-        .arg("--model")
-        .arg("tiny")
-        .arg("--file")
-        .arg(&wav_path)
-        .arg("--output-txt")
+/// Transcribe audio via moonshine-tiny Python script.
+fn stt(audio_pcm: &[u8]) -> Result<String> {
+    let mut child = Command::new("python3")
+        .arg(&script_path("aleph-stt.py"))
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()?;
-
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
-        anyhow::bail!("No speech detected");
-    }
-    Ok(text)
+        .spawn()?;
+    child.stdin.take().unwrap().write_all(audio_pcm)?;
+    let output = child.wait_with_output()?;
+    let data: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    Ok(data["text"].as_str().unwrap_or("").to_string())
 }
 
-fn capture_with_moonshine() -> Result<String> {
-    // Check for moonshine binary
-    let moonshine_bin = std::env::var("ALEPH_MOONSHINE_BIN").unwrap_or_else(|_| "moonshine".into());
-    if Command::new(&moonshine_bin).arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
-        anyhow::bail!("moonshine not found at {}", moonshine_bin);
-    }
+/// Speak text via espeak-ng (streaming, natural).
+fn tts(text: &str) -> Result<()> {
+    // Split into sentences for streaming delivery
+    let sentences: Vec<&str> = text.split(|c: char| c == '.' || c == '!' || c == '?')
+        .map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
-    let tmp_dir = std::env::temp_dir();
-    let wav_path = tmp_dir.join("aleph_query.wav");
-    record_audio(&wav_path, 5)?;
+    for sentence in &sentences {
+        // Write each sentence to espeak-ng via stdin pipe (streaming)
+        let child = Command::new("espeak-ng")
+            .args(["-v", "en-us", "-s", "155", "-p", "50", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
 
-    let output = Command::new(&moonshine_bin)
-        .arg("--audio")
-        .arg(&wav_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()?;
-
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
-        anyhow::bail!("No speech detected");
-    }
-    Ok(text)
-}
-
-fn record_audio(path: &std::path::Path, duration_secs: u64) -> Result<()> {
-    // Try to use `arecord` (Linux ALSA) — most reliable approach
-    if Command::new("arecord").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok() {
-        let status = Command::new("arecord")
-            .args([
-                "-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
-                "-d", &duration_secs.to_string(),
-                path.to_str().unwrap(),
-            ])
-            .status()?;
-        if status.success() {
-            return Ok(());
+        match child {
+            Ok(mut c) => {
+                writeln!(c.stdin.take().unwrap(), "{}", sentence)?;
+                let _ = c.wait();
+                std::thread::sleep(Duration::from_millis(50)); // small gap between sentences
+            }
+            Err(_) => {
+                // Fallback to espeak
+                if let Ok(mut c) = Command::new("espeak")
+                    .args(["-v", "en-us", "-s", "155", "--stdin"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    writeln!(c.stdin.take().unwrap(), "{}", sentence)?;
+                    let _ = c.wait();
+                } else {
+                    // Print fallback
+                    println!("  {}", sentence);
+                }
+            }
         }
     }
-
-    // Fallback: try `parec` (PulseAudio) with `sox` to convert
-    if Command::new("parec").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
-        && Command::new("sox").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
-    {
-        let status = Command::new("parec")
-            .args(["--rate=16000", "--channels=1", "--format=s16le"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?
-            .wait_with_output()?;
-
-        // Convert raw PCM to WAV
-        let mut wav = std::fs::File::create(path)?;
-        write_wav_header(&mut wav, 16000, 1, &status.stdout)?;
-        return Ok(());
-    }
-
-    anyhow::bail!("No audio capture tool found. Install 'arecord' (alsa-utils) or 'parec' (pulseaudio-utils)")
-}
-
-fn write_wav_header(writer: &mut impl Write, sample_rate: u32, channels: u16, data: &[u8]) -> Result<()> {
-    let data_len = data.len() as u32;
-    use byteorder::{LittleEndian, WriteBytesExt};
-    writer.write_all(b"RIFF")?;
-    writer.write_u32::<LittleEndian>(36 + data_len)?;
-    writer.write_all(b"WAVE")?;
-    writer.write_all(b"fmt ")?;
-    writer.write_u32::<LittleEndian>(16)?; // chunk size
-    writer.write_u16::<LittleEndian>(1)?;  // PCM
-    writer.write_u16::<LittleEndian>(channels)?;
-    writer.write_u32::<LittleEndian>(sample_rate)?;
-    writer.write_u32::<LittleEndian>(sample_rate * channels as u32 * 2)?; // byte rate
-    writer.write_u16::<LittleEndian>(channels * 2)?; // block align
-    writer.write_u16::<LittleEndian>(16)?; // bits per sample
-    writer.write_all(b"data")?;
-    writer.write_u32::<LittleEndian>(data_len)?;
-    writer.write_all(data)?;
     Ok(())
 }
 
-fn ask_aleph(query: &str) -> Result<String> {
-    let body = serde_json::json!({"question": query, "top_k": 5});
-    let url = format!("{}/api/ask", API_BASE);
+/// Record N seconds of audio from mic, return raw 16kHz PCM.
+fn record(duration_secs: u64) -> Result<Vec<u8>> {
+    let tmp = std::env::temp_dir().join("aleph_query.wav");
 
-    let resp = ureq::post(&url)
-        .header("Content-Type", "application/json")
-        .send_json(&body)
-        .map_err(|e| anyhow::anyhow!("API request failed: {}", e))?;
+    // arecord → WAV file, strip header
+    if let Ok(status) = Command::new("arecord")
+        .args(["-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
+               "-d", &duration_secs.to_string(), tmp.to_str().unwrap()])
+        .status()
+    {
+        if status.success() {
+            let wav = std::fs::read(&tmp)?;
+            let _ = std::fs::remove_file(&tmp);
+            return Ok(if wav.len() > 44 { wav[44..].to_vec() } else { wav });
+        }
+    }
 
-    let body = resp.into_body().read_to_string()?;
-    let data: serde_json::Value = serde_json::from_str(&body)?;
-    let answer = data["answer"].as_str().unwrap_or("No answer").to_string();
-    Ok(answer)
+    // parec fallback
+    if let Ok(output) = Command::new("parec")
+        .args(["--rate=16000", "--channels=1", "--format=s16le",
+               "--record", "--duration", &duration_secs.to_string()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+    {
+        if !output.stdout.is_empty() { return Ok(output.stdout); }
+    }
+
+    anyhow::bail!("Install 'alsa-utils' (arecord) for mic capture")
 }
 
-fn speak(text: &str) {
-    // Try espeak-ng first
-    if let Ok(_) = Command::new("espeak-ng").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status() {
-        let _ = Command::new("espeak-ng")
-            .args(["-v", "en-us", "-s", "150", text])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        return;
-    }
+fn ask(query: &str) -> Result<String> {
+    let body = serde_json::json!({"question": query, "top_k": 5});
+    let resp = ureq::post(&format!("{}/api/ask", API_BASE))
+        .header("Content-Type", "application/json")
+        .send_json(&body)
+        .map_err(|e| anyhow::anyhow!("API: {}", e))?;
+    let body = resp.into_body().read_to_string()?;
+    let data: serde_json::Value = serde_json::from_str(&body)?;
+    Ok(data["answer"].as_str().unwrap_or("No answer").to_string())
+}
 
-    // Try espeak (older)
-    if let Ok(_) = Command::new("espeak").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status() {
-        let _ = Command::new("espeak")
-            .args(["-v", "en-us", "-s", "150", text])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        return;
-    }
+pub fn run_listen_loop() -> Result<()> {
+    println!("  ╔═══════════════════════════════════════╗");
+    println!("  ║        Aleph Voice — Listening Mode    ║");
+    println!("  ║  STT: moonshine-tiny  TTS: espeak-ng  ║");
+    println!("  ╚═══════════════════════════════════════╝");
+    println!();
+    println!("  Speak after the beep. Press Ctrl+C to exit.");
 
-    // Print to terminal as fallback
-    println!("  [TTS unavailable] Response: {}", text);
+    loop {
+        print!("\n  🎤 Listening (5s)...");
+        std::io::stdout().flush()?;
+
+        let audio = match record(5) {
+            Ok(a) if a.len() > 8000 => a,
+            _ => {
+                print!("\r  ⌨️  Type instead: ");
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                let q = input.trim().to_string();
+                if q.is_empty() { continue; }
+                process(&q)?;
+                continue;
+            }
+        };
+
+        print!("\r  🔄 Transcribing...");
+        std::io::stdout().flush()?;
+
+        let query = match stt(&audio) {
+            Ok(q) if !q.is_empty() => q,
+            Ok(_) => { println!("\r  No speech detected."); continue; }
+            Err(e) => {
+                print!("\r  ✗ STT error ({}). Type: ", e);
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                input.trim().to_string()
+            }
+        };
+
+        process(&query)?;
+    }
+}
+
+fn process(query: &str) -> Result<()> {
+    println!("\r  You: \"{}\"", query);
+    print!("  🤔 Thinking...");
+    std::io::stdout().flush()?;
+
+    let answer = match ask(query) {
+        Ok(a) => a,
+        Err(e) => { println!("\r  ✗ {}", e); return Ok(()); }
+    };
+
+    println!("\r  Aleph: {}", answer);
+    print!("  🔈 Speaking...");
+    std::io::stdout().flush()?;
+
+    if let Err(e) = tts(&answer) {
+        eprintln!("\r  ⚠ TTS: {}", e);
+    }
+    println!("\r  ✅ Done");
+
+    Ok(())
 }
