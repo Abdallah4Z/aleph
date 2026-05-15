@@ -7,6 +7,7 @@ pub mod config;
 pub mod llm;
 pub mod codecontext;
 pub mod session;
+pub mod memory;
 
 pub use models::*;
 pub use extractor::*;

@@ -24,6 +24,12 @@ pub struct Database {
     sqlite: Pool<Sqlite>,
 }
 
+impl Clone for Database {
+    fn clone(&self) -> Self {
+        Self { sqlite: self.sqlite.clone() }
+    }
+}
+
 impl Database {
     /// Open (or create) the SQLite database at `{data_dir}/metadata.db`.
     ///
@@ -96,6 +102,15 @@ impl Database {
                 date        TEXT PRIMARY KEY,
                 summary     TEXT NOT NULL,
                 generated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS memories (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                content     TEXT NOT NULL,
+                source_ids  TEXT NOT NULL,
+                similarity  REAL NOT NULL,
+                created_at  INTEGER NOT NULL,
+                dismissed   INTEGER DEFAULT 0
             );
             "#,
         )
@@ -387,6 +402,23 @@ impl Database {
         }).collect())
     }
 
+    /// Get a single event by its ID.
+    pub async fn get_event_by_id(&self, id: i64) -> Result<Option<RecentEvent>> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: i64, app_name: String, window_title: String, start_time: i64, end_time: Option<i64>, source_type: String, category: Option<String>, code_file: Option<String>, code_project: Option<String>, code_branch: Option<String> }
+        let row: Option<Row> = sqlx::query_as(
+            "SELECT id, app_name, window_title, start_time, end_time, source_type, category, code_file, code_project, code_branch
+             FROM context_events WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.sqlite)
+        .await?;
+        Ok(row.map(|r| {
+            let duration_ms = r.end_time.unwrap_or(r.start_time) - r.start_time;
+            RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type, category: r.category, code_file: r.code_file, code_project: r.code_project, code_branch: r.code_branch }
+        }))
+    }
+
     /// Store a screenshot PNG for an event.
     pub async fn insert_screenshot(&self, event_id: i64, png: &[u8]) -> Result<()> {
         sqlx::query(
@@ -472,6 +504,43 @@ impl Database {
             let duration_ms = r.end_time.unwrap_or(r.start_time) - r.start_time;
             RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type, category: r.category, code_file: r.code_file, code_project: r.code_project, code_branch: r.code_branch }
         }).collect())
+    }
+
+    /// Insert a proactive memory.
+    pub async fn insert_memory(&self, content: &str, source_ids: &str, similarity: f32) -> Result<i64> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let result = sqlx::query(
+            "INSERT INTO memories (content, source_ids, similarity, created_at) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(content)
+        .bind(source_ids)
+        .bind(similarity)
+        .bind(now)
+        .execute(&self.sqlite)
+        .await?;
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Get undismissed memories.
+    pub async fn get_memories(&self, limit: i64) -> Result<Vec<(i64, String, String, f32, i64)>> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: i64, content: String, source_ids: String, similarity: f32, created_at: i64 }
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT id, content, source_ids, similarity, created_at FROM memories WHERE dismissed = 0 ORDER BY created_at DESC LIMIT ?1",
+        )
+        .bind(limit)
+        .fetch_all(&self.sqlite)
+        .await?;
+        Ok(rows.into_iter().map(|r| (r.id, r.content, r.source_ids, r.similarity, r.created_at)).collect())
+    }
+
+    /// Dismiss a memory.
+    pub async fn dismiss_memory(&self, id: i64) -> Result<()> {
+        sqlx::query("UPDATE memories SET dismissed = 1 WHERE id = ?1")
+            .bind(id)
+            .execute(&self.sqlite)
+            .await?;
+        Ok(())
     }
 }
 

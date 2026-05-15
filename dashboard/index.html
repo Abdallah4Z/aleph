@@ -159,6 +159,15 @@ body { background: #0a0a14; font-family: 'Inter', system-ui, sans-serif; color: 
     </div>
   </div>
 
+  <!-- Proactive Memories -->
+  <div class="chart-card fade-in mb-5 hidden" id="memoriesCard" style="animation-delay:0.46s">
+    <div class="flex items-center justify-between mb-3">
+      <span class="chart-title">💡 Memories</span>
+      <span id="memoriesCount" class="text-xs text-gray-600"></span>
+    </div>
+    <div id="memoriesList" class="space-y-2"></div>
+  </div>
+
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-8">
     <div class="chart-card fade-in" style="animation-delay:0.45s">
       <div id="topWindows" class="space-y-1.5 max-h-[420px] overflow-y-auto pr-1"></div>
@@ -544,9 +553,42 @@ async function searchContext() {
   }
 }
 
+async function loadMemories() {
+  try {
+    const memories = await fetchJSON('/api/memories');
+    const card = $('memoriesCard');
+    const list = $('memoriesList');
+    const count = $('memoriesCount');
+    if (!memories || memories.length === 0) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    count.textContent = `${memories.length} suggestion${memories.length > 1 ? 's' : ''}`;
+    const now = Date.now();
+    list.innerHTML = memories.map(m => {
+      const ago = Math.floor((now - m.created_at) / 60000);
+      return `<div class="flex items-start gap-3 p-3 rounded-lg bg-surface border border-accent/20 hover:border-accent/40 transition-all">
+        <span class="text-lg mt-0.5">💡</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs text-gray-200 leading-relaxed">${esc(m.content)}</div>
+          <div class="flex items-center gap-2 mt-1.5">
+            <span class="text-xs text-gray-600">${ago}m ago · similarity ${(m.similarity * 100).toFixed(0)}%</span>
+            <button onclick="dismissMemory(${m.id})" class="text-xs text-gray-600 hover:text-red-400 transition-colors">Dismiss</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { /* quiet */ }
+}
+
+async function dismissMemory(id) {
+  try {
+    await fetch(`/api/memories/${id}`, { method: 'DELETE' });
+    loadMemories();
+  } catch(e) { console.error('Dismiss failed:', e); }
+}
+
 async function refreshAll() {
   document.querySelectorAll('.stat-card').forEach(e => e.style.opacity = '0.5');
-  await Promise.all([loadOverview(), loadDaily(), loadHourly(), loadApps(), loadWeekly(), loadTopWindows(), loadRecent(), loadTimeline()]);
+  await Promise.all([loadOverview(), loadDaily(), loadHourly(), loadApps(), loadWeekly(), loadTopWindows(), loadRecent(), loadTimeline(), loadMemories()]);
   document.querySelectorAll('.stat-card').forEach(e => e.style.opacity = '1');
 }
 

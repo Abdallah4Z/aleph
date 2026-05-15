@@ -46,7 +46,15 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
         }
     };
 
+    let mem_db = db.clone();
+    let mem_encoder = text_encoder.clone();
     let state = Arc::new(AppState { db, text_encoder });
+
+    tokio::spawn(async move {
+        if let Err(e) = aleph_core::memory::run_memory_engine(mem_db, mem_encoder).await {
+            error!("Memory engine failed: {}", e);
+        }
+    });
 
     let app = Router::new()
         .route("/", get(dashboard_handler))
@@ -67,6 +75,8 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
         .route("/api/daily-summary/today", get(today_summary_handler))
         .route("/api/ingest/browser", post(browser_ingest_handler))
         .route("/api/sessions", get(sessions_handler))
+        .route("/api/memories", get(get_memories_handler))
+        .route("/api/memories/{id}", axum::routing::delete(dismiss_memory_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -357,6 +367,40 @@ async fn sessions_handler(
 
     let sessions = aleph_core::session::detect_sessions(&events);
     Ok(Json(sessions))
+}
+
+// ---------------------------------------------------------------------------
+// Proactive Memory endpoints
+// ---------------------------------------------------------------------------
+
+async fn get_memories_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let memories = state.db.get_memories(20).await.map_err(|e| {
+        error!("Failed to fetch memories: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let result: Vec<serde_json::Value> = memories.into_iter().map(|(id, content, source_ids, similarity, created_at)| {
+        serde_json::json!({
+            "id": id,
+            "content": content,
+            "source_ids": source_ids,
+            "similarity": similarity,
+            "created_at": created_at,
+        })
+    }).collect();
+    Ok(Json(result))
+}
+
+async fn dismiss_memory_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    state.db.dismiss_memory(id).await.map_err(|e| {
+        error!("Failed to dismiss memory: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::json!({"dismissed": id})))
 }
 
 const DASHBOARD_HTML: &str = include_str!("../../../dashboard/index.html");
