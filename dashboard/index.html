@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aleph — Context Store Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: { extend: { colors: {
+    surface: '#12121e', card: '#1a1a2e', border: '#252540',
+    accent: '#00d4aa', 'accent-dim': '#00d4aa33',
+    purple: '#a855f7', blue: '#3b82f6', orange: '#f59e0b', pink: '#ec4899',
+  }, fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }, }}
+}
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0a14; font-family: 'Inter', system-ui, sans-serif; color: #c8c8d4; -webkit-font-smoothing: antialiased; }
+.stat-card { background: linear-gradient(135deg, #1a1a2e 0%, #1e1e36 100%); border-radius: 16px; padding: 1.25rem; border: 1px solid #252540; transition: all 0.25s; }
+.stat-card:hover { border-color: #00d4aa55; transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,212,170,0.06); }
+.chart-card { background: #1a1a2e; border-radius: 16px; padding: 1.5rem; border: 1px solid #252540; position: relative; }
+.search-box { background: #1a1a2e; border: 1px solid #252540; border-radius: 12px; padding: 0.7rem 1rem 0.7rem 2.75rem; color: #e2e8f0; width: 100%; font-size: 0.875rem; transition: all 0.2s; }
+.search-box:focus { outline: none; border-color: #00d4aa; box-shadow: 0 0 0 3px #00d4aa22; }
+.search-box::placeholder { color: #4a4a6a; }
+.timeline-item { background: #1a1a2e; border-radius: 10px; padding: 0.85rem 1rem; border: 1px solid #252540; transition: all 0.15s; }
+.timeline-item:hover { border-color: #00d4aa44; }
+.timeline-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.badge { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+.badge-text { background: #00d4aa22; color: #00d4aa; }
+.badge-vision { background: #a855f722; color: #a855f7; }
+.btn-filter { padding: 0.4rem 0.9rem; border-radius: 8px; font-size: 0.78rem; font-weight: 500; border: 1px solid #252540; background: transparent; color: #6a6a8a; cursor: pointer; transition: all 0.15s; }
+.btn-filter:hover { border-color: #00d4aa44; color: #c8c8d4; }
+.btn-filter.active { background: #00d4aa22; border-color: #00d4aa; color: #00d4aa; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #252540; border-radius: 4px; }
+.stat-value { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+.stat-label { font-size: 0.78rem; font-weight: 500; color: #6a6a8a; }
+.chart-title { font-size: 0.85rem; font-weight: 600; color: #a8a8c0; letter-spacing: 0.01em; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.fade-in { animation: fadeIn 0.3s ease-out forwards; }
+.chart-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #4a4a6a; font-size: 0.85rem; pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" id="app">
+  <header class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-8 fade-in">
+    <div class="flex items-center gap-3">
+      <svg class="w-8 h-8" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#00d4aa"/><path d="M8 22V10l8 6-8 6zM18 22V10l8 6-8 6z" fill="#0a0a14"/></svg>
+      <div><h1 class="text-xl font-bold text-white tracking-tight">Aleph</h1><p class="text-xs text-gray-600 -mt-0.5">Context Store Dashboard</p></div>
+    </div>
+    <div class="flex items-center gap-3 w-full lg:w-auto">
+      <div class="relative flex-1 lg:w-96">
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input id="searchInput" type="text" placeholder="Search your context history..." class="search-box" onkeydown="if(event.key==='Enter') searchContext()">
+      </div>
+      <a href="/settings" class="p-2 rounded-lg border border-border hover:border-accent/40 transition-colors" title="Settings">
+        <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      </a>
+      <button onclick="refreshAll()" class="p-2 rounded-lg border border-border hover:border-accent/40 transition-colors" title="Refresh">
+        <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="searchResults" class="hidden mb-8"></div>
+
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8" id="statsCards">
+    <div class="stat-card fade-in" style="animation-delay:0.05s">
+      <div class="flex items-center gap-3 mb-2">
+        <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <span class="stat-label">Total Events</span>
+      </div>
+      <div class="stat-value text-white" id="statEvents">0</div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.10s">
+      <div class="flex items-center gap-3 mb-2">
+        <svg class="w-5 h-5 text-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        <span class="stat-label">Applications</span>
+      </div>
+      <div class="stat-value text-white" id="statApps">0</div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.15s">
+      <div class="flex items-center gap-3 mb-2">
+        <svg class="w-5 h-5 text-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span class="stat-label">Hours Tracked</span>
+      </div>
+      <div class="stat-value text-white" id="statHours">0.0</div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.20s">
+      <div class="flex items-center gap-3 mb-2">
+        <svg class="w-5 h-5 text-orange" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        <span class="stat-label">Today</span>
+      </div>
+      <div class="stat-value text-white" id="statToday">0</div>
+    </div>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-2 mb-6">
+    <span class="text-xs text-gray-600 font-medium uppercase tracking-wider mr-1">Period</span>
+    <button class="btn-filter" data-period="24h" onclick="setPeriod('24h')">24H</button>
+    <button class="btn-filter active" data-period="7d" onclick="setPeriod('7d')">7D</button>
+    <button class="btn-filter" data-period="30d" onclick="setPeriod('30d')">30D</button>
+    <button class="btn-filter" data-period="all" onclick="setPeriod('all')">All</button>
+    <span class="text-xs text-gray-600 font-medium uppercase tracking-wider ml-4 mr-1">App</span>
+    <select id="appFilter" class="btn-filter text-xs py-1.5" onchange="refreshAll()">
+      <option value="all">All Apps</option>
+    </select>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+    <div class="chart-card fade-in" style="animation-delay:0.25s">
+      <div class="flex items-center gap-2 mb-4">
+        <canvas id="dailyChart" height="240" class="w-full"></canvas>
+        <div id="dailyEmpty" class="chart-empty hidden">No daily data yet</div>
+      </div>
+    </div>
+    <div class="chart-card fade-in" style="animation-delay:0.30s">
+      <div class="flex items-center gap-2 mb-4">
+        <canvas id="hourlyChart" height="240" class="w-full"></canvas>
+        <div id="hourlyEmpty" class="chart-empty hidden">No hourly data yet</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+    <div class="chart-card fade-in" style="animation-delay:0.35s">
+      <div class="flex items-center gap-2 mb-4">
+        <canvas id="appsChart" height="280" class="w-full"></canvas>
+        <div id="appsEmpty" class="chart-empty hidden">No application data yet</div>
+      </div>
+    </div>
+    <div class="chart-card fade-in" style="animation-delay:0.40s">
+      <div class="flex items-center gap-2 mb-4">
+        <canvas id="weeklyChart" height="280" class="w-full"></canvas>
+        <div id="weeklyEmpty" class="chart-empty hidden">No weekly data yet</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-8">
+    <div class="chart-card fade-in" style="animation-delay:0.45s">
+      <div id="topWindows" class="space-y-1.5 max-h-[420px] overflow-y-auto pr-1"></div>
+    </div>
+    <div class="chart-card fade-in" style="animation-delay:0.50s">
+      <div id="recentEvents" class="space-y-1.5 max-h-[420px] overflow-y-auto pr-1"></div>
+    </div>
+  </div>
+
+  <div class="text-center py-6 border-t border-border">
+    <div class="flex items-center justify-center gap-2 text-xs text-gray-700">
+      <svg class="w-3 h-3" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#00d4aa" opacity="0.5"/><path d="M8 22V10l8 6-8 6zM18 22V10l8 6-8 6z" fill="#0a0a14"/></svg>
+      <span>Aleph &mdash; Nomeda Lab &mdash; All data stored locally in SQLite</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const APP_COLORS = ['#00d4aa','#a855f7','#3b82f6','#f59e0b','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1','#14b8a6'];
+Chart.defaults.color = '#6a6a8a';
+Chart.defaults.borderColor = '#252540';
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+Chart.defaults.font.size = 11;
+
+let currentPeriod = '7d';
+
+function formatDuration(ms) {
+  if (!ms || ms <= 0) return '—';
+  if (ms < 60000) return `${(ms/1000).toFixed(0)}s`;
+  if (ms < 3600000) return `${(ms/60000).toFixed(1)}m`;
+  return `${(ms/3600000).toFixed(2)}h`;
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function $(id) { return document.getElementById(id); }
+
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; }
+
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function showEmpty(id, msg) { const e = $(id); if (e) { e.classList.remove('hidden'); e.textContent = msg; } }
+function hideEmpty(id) { const e = $(id); if (e) e.classList.add('hidden'); }
+
+function setPeriod(p) {
+  currentPeriod = p;
+  document.querySelectorAll('.btn-filter[data-period]').forEach(b => b.classList.toggle('active', b.dataset.period === p));
+  refreshAll();
+}
+
+function destroyChart(chart) { if (chart) { chart.destroy(); return null; } return null; }
+let dailyChart, hourlyChart, appsChart, weeklyChart;
+
+async function loadOverview() {
+  try {
+    const d = await fetchJSON('/api/stats/overview');
+    $('statEvents').textContent = d.total_events?.toLocaleString() || '0';
+    $('statApps').textContent = d.total_apps || '0';
+    $('statHours').textContent = (d.total_tracked_hours || 0).toFixed(1);
+    $('statToday').textContent = d.today_events || '0';
+  } catch(e) { console.error('Overview:', e); }
+}
+
+async function loadDaily() {
+  try {
+    let data = await fetchJSON('/api/stats/daily');
+    if (!data || data.length === 0) { showEmpty('dailyEmpty', 'No daily activity recorded yet'); return; }
+    hideEmpty('dailyEmpty');
+    if (currentPeriod === '7d') data = data.slice(0, 7);
+    else if (currentPeriod === '24h') data = data.slice(0, 1);
+    else if (currentPeriod === '30d') data = data.slice(0, 30);
+    const labels = data.map(d => d.date).reverse();
+    const counts = data.map(d => d.count).reverse();
+    if (labels.length === 0) { showEmpty('dailyEmpty', 'No data for this period'); return; }
+    dailyChart = destroyChart(dailyChart);
+    const ctx = $('dailyChart').getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 240);
+    gradient.addColorStop(0, '#00d4aa55'); gradient.addColorStop(1, '#00d4aa02');
+    dailyChart = new Chart(ctx, { type: 'bar',
+      data: { labels, datasets: [{ data: counts, backgroundColor: gradient, borderColor: '#00d4aa', borderWidth: 1.5, borderRadius: 6 }] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#e2e8f0', bodyColor: '#a8a8c0', borderColor: '#252540', borderWidth: 1, padding: 12 } },
+        scales: { y: { beginAtZero: true, grid: { color: '#252540' }, ticks: { stepSize: 1 } }, x: { grid: { display: false }, ticks: { maxRotation: 45 } } }
+      }
+    });
+  } catch(e) { console.error('Daily:', e); }
+}
+
+async function loadHourly() {
+  try {
+    const data = await fetchJSON('/api/stats/hourly');
+    if (!data || data.length === 0) { showEmpty('hourlyEmpty', 'No hourly data recorded yet'); return; }
+    hideEmpty('hourlyEmpty');
+    const labels = data.map(d => `${d.hour}:00`);
+    const counts = data.map(d => d.count);
+    hourlyChart = destroyChart(hourlyChart);
+    const ctx = $('hourlyChart').getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 240);
+    gradient.addColorStop(0, '#a855f755'); gradient.addColorStop(1, '#a855f702');
+    hourlyChart = new Chart(ctx, { type: 'bar',
+      data: { labels, datasets: [{ data: counts, backgroundColor: gradient, borderColor: '#a855f7', borderWidth: 1.5, borderRadius: 6 }] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, grid: { color: '#252540' }, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
+      }
+    });
+  } catch(e) { console.error('Hourly:', e); }
+}
+
+async function loadApps() {
+  try {
+    const data = await fetchJSON('/api/stats/apps');
+    if (!data || data.length === 0) { showEmpty('appsEmpty', 'No application data recorded yet'); return; }
+    hideEmpty('appsEmpty');
+    const labels = data.map(d => d.app_name);
+    const values = data.map(d => d.count);
+    appsChart = destroyChart(appsChart);
+    appsChart = new Chart($('appsChart'), { type: 'doughnut',
+      data: { labels, datasets: [{ data: values, backgroundColor: APP_COLORS.slice(0, labels.length), borderWidth: 2, borderColor: '#1a1a2e' }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '65%',
+        plugins: { legend: { position: 'right', labels: { padding: 14, usePointStyle: true, pointStyle: 'circle' } },
+          tooltip: { backgroundColor: '#1a1a2e', titleColor: '#e2e8f0', bodyColor: '#a8a8c0', borderColor: '#252540', borderWidth: 1, padding: 12 }
+        }
+      }
+    });
+    const sel = $('appFilter'); const current = sel.value;
+    sel.innerHTML = '<option value="all">All Apps</option>' + data.map(d => `<option value="${esc(d.app_name)}">${esc(d.app_name)}</option>`).join('');
+    sel.value = current;
+  } catch(e) { console.error('Apps:', e); }
+}
+
+async function loadWeekly() {
+  try {
+    const data = await fetchJSON('/api/stats/daily');
+    const last7 = data ? data.slice(0, 7).reverse() : [];
+    if (last7.length === 0) { showEmpty('weeklyEmpty', 'No weekly data recorded yet'); return; }
+    hideEmpty('weeklyEmpty');
+    const labels = last7.map(d => d.date);
+    const mins = last7.map(d => +(d.duration_ms / 60000).toFixed(1));
+    weeklyChart = destroyChart(weeklyChart);
+    const ctx = $('weeklyChart').getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 280);
+    gradient.addColorStop(0, '#ec489944'); gradient.addColorStop(1, '#ec489902');
+    weeklyChart = new Chart(ctx, { type: 'line',
+      data: { labels, datasets: [{ label: 'Minutes', data: mins, borderColor: '#ec4899', backgroundColor: gradient, fill: true, tension: 0.4, pointBackgroundColor: '#ec4899', pointBorderColor: '#1a1a2e', pointBorderWidth: 2, pointRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#e2e8f0', bodyColor: '#a8a8c0', borderColor: '#252540', borderWidth: 1, padding: 12 } },
+        scales: { y: { beginAtZero: true, grid: { color: '#252540' }, ticks: { callback: v => `${v}m` } }, x: { grid: { display: false } } }
+      }
+    });
+  } catch(e) { console.error('Weekly:', e); }
+}
+
+async function loadTopWindows() {
+  try {
+    const data = await fetchJSON('/api/stats/windows');
+    const container = $('topWindows');
+    if (!data || data.length === 0) { container.innerHTML = '<div class="empty-state py-12">No window data recorded yet</div>'; return; }
+    const maxDur = Math.max(...data.map(w => w.duration_ms), 1);
+    container.innerHTML = data.map((w, i) => `
+      <div class="timeline-item flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0 flex-1">
+          <span class="text-xs font-mono text-gray-700 w-6 shrink-0 text-right">#${i+1}</span>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium text-gray-200 truncate">${esc(w.window_title)}</div>
+            <div class="text-xs text-gray-600">${esc(w.app_name)}</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <div class="w-24 h-1.5 rounded-full bg-border overflow-hidden hidden sm:block">
+            <div class="h-full rounded-full bg-accent/60" style="width:${(w.duration_ms/maxDur*100).toFixed(0)}%"></div>
+          </div>
+          <div class="text-right">
+            <div class="text-sm font-semibold text-white">${formatDuration(w.duration_ms)}</div>
+            <div class="text-xs text-gray-600">${w.count} events</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { console.error('Windows:', e); }
+}
+
+async function loadRecent() {
+  try {
+    const data = await fetchJSON('/api/stats/recent');
+    const container = $('recentEvents');
+    if (!data || data.length === 0) { container.innerHTML = '<div class="empty-state py-12">No events recorded yet</div>'; return; }
+    container.innerHTML = data.map(e => {
+      const dur = formatDuration(e.duration_ms);
+      const t = new Date(e.start_time);
+      const time = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const date = t.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      const dot = e.source_type === 'text' ? 'bg-accent' : 'bg-purple';
+      const badge = e.source_type === 'text' ? 'badge-text' : 'badge-vision';
+      return `<div class="timeline-item">
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="timeline-dot ${dot}"></span>
+            <span class="badge ${badge}">${esc(e.source_type)}</span>
+            <span class="text-sm font-medium text-gray-200 truncate">${esc(e.app_name)}</span>
+          </div>
+          <div class="flex items-center gap-2 shrink-0 text-xs text-gray-600">
+            <span>${date}</span><span>${time}</span><span class="text-accent font-medium">${dur}</span>
+          </div>
+        </div>
+        <div class="text-sm text-gray-500 truncate pl-4">${esc(e.window_title)}</div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error('Recent:', e); }
+}
+
+async function searchContext() {
+  const query = $('searchInput').value.trim();
+  const container = $('searchResults');
+  if (!query) { container.classList.add('hidden'); return; }
+  container.innerHTML = '<div class="chart-card p-6"><div class="text-gray-500 text-center py-4">Searching...</div></div>';
+  container.classList.remove('hidden');
+  try {
+    const data = await (await fetch('/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: query, top_k: 10 })
+    })).json();
+    if (!data.context || data.context.length === 0) {
+      container.innerHTML = '<div class="chart-card p-6"><div class="text-gray-500 text-center py-4">No matching context found</div></div>';
+      return;
+    }
+    container.innerHTML = `
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Search Results</h2>
+        <button onclick="$('searchResults').classList.add('hidden')" class="text-xs text-gray-600 hover:text-gray-400">Close</button>
+      </div>
+      ${data.context.map(c => {
+        const dur = c.metadata.end_time ? formatDuration(c.metadata.end_time - c.metadata.start_time) : '—';
+        const time = new Date(c.metadata.start_time).toLocaleString();
+        return `<div class="timeline-item mb-2">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <div class="flex items-center gap-2">
+              <span class="timeline-dot bg-accent"></span>
+              <span class="badge badge-text">${esc(c.metadata.source_type)}</span>
+              <span class="text-sm font-medium text-gray-200">${esc(c.metadata.app_name)}</span>
+              <span class="text-xs text-gray-700 font-mono">${c.score.toFixed(3)}</span>
+            </div>
+            <span class="text-xs text-gray-600">${time}</span>
+          </div>
+          <div class="text-sm text-gray-500 truncate pl-4">${esc(c.metadata.window_title)}</div>
+        </div>`;
+      }).join('')}`;
+  } catch(e) {
+    container.innerHTML = `<div class="chart-card p-6"><div class="text-red-400 text-center py-4">${esc(e.message)}</div></div>`;
+  }
+}
+
+async function refreshAll() {
+  document.querySelectorAll('.stat-card').forEach(e => e.style.opacity = '0.5');
+  await Promise.all([loadOverview(), loadDaily(), loadHourly(), loadApps(), loadWeekly(), loadTopWindows(), loadRecent()]);
+  document.querySelectorAll('.stat-card').forEach(e => e.style.opacity = '1');
+}
+
+document.addEventListener('DOMContentLoaded', refreshAll);
+</script>
+</body>
+</html>

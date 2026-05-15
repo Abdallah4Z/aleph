@@ -1,0 +1,19 @@
+[package]
+name = "aleph-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "aleph"
+path = "src/main.rs"
+
+[dependencies]
+aleph-core = { path = "../aleph-core" }
+aleph-daemon = { path = "../aleph-daemon" }
+aleph-api = { path = "../aleph-api" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"

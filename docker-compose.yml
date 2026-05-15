@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: engramd-n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=engramd123
+      - GENERIC_TIMEZONE=Africa/Cairo
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - engramd-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: engramd-ollama
+    restart: always
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - engramd-net
+    # Auto-pull model on first start
+    entrypoint: >
+      sh -c "
+        /bin/ollama serve &
+        sleep 5
+        /bin/ollama pull qwen2.5:0.5b || true
+        wait
+      "
+
+volumes:
+  n8n_data:
+  ollama_data:
+
+networks:
+  engramd-net:
+    driver: bridge

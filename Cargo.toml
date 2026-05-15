@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/aleph-core", "crates/aleph-daemon", "crates/aleph-api", "crates/aleph-cli"]
+
+[workspace.dependencies]
+tokio = { version = "1.44", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+chrono = "0.4"
+uuid = { version = "1.16", features = ["v4"] }
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

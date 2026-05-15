@@ -1,0 +1,74 @@
+{
+  "name": "Engramd Context Retrieval",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Chat Trigger",
+      "type": "n8n-nodes-base.chatTrigger",
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:2198/query",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\"question\":\"{{ $json.message }}\",\"top_k\":5}"
+      },
+      "name": "Query Context API",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $input.first().json;\nconst sources = ctx.sources.map(s => `- ${s.app_name}: ${s.window_title} (${new Date(s.start_time).toLocaleString()})`).join('\\n');\nconst context = ctx.context.map(c => c.metadata.window_title).join('\\n');\nreturn [{\n  json: {\n    system_prompt: `You are Engramd, a local context assistant. Based on the user's screen history, answer their question concisely.\\n\\nContext Sources:\\n${sources}\\n\\nRelevant Windows:\\n${context}`,\n    user_message: ctx.question\n  }\n}];"
+      },
+      "name": "Format Context",
+      "type": "n8n-nodes-base.code",
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:0.5b",
+        "options": {
+          "baseURL": "http://engramd-ollama:11434"
+        },
+        "messages": {
+          "message": [
+            {
+              "role": "system",
+              "content": "={{ $json.system_prompt }}"
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.user_message }}"
+            }
+          ]
+        }
+      },
+      "name": "Ollama Chat",
+      "type": "n8n-nodes-base.ollama",
+      "position": [850, 300]
+    },
+    {
+      "parameters": {},
+      "name": "Respond to Chat",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Chat Trigger": {
+      "main": [[{"node": "Query Context API", "type": "main", "index": 0}]]
+    },
+    "Query Context API": {
+      "main": [[{"node": "Format Context", "type": "main", "index": 0}]]
+    },
+    "Format Context": {
+      "main": [[{"node": "Ollama Chat", "type": "main", "index": 0}]]
+    },
+    "Ollama Chat": {
+      "main": [[{"node": "Respond to Chat", "type": "main", "index": 0}]]
+    }
+  }
+}

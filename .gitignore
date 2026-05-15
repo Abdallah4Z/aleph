@@ -1,0 +1,8 @@
+target/
+data/
+.env
+*.pid
+*.swp
+*.swo
+*~
+.DS_Store

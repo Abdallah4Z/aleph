@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aleph — Settings</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: { extend: { colors: {
+    surface: '#12121e', card: '#1a1a2e', border: '#252540',
+    accent: '#00d4aa', 'accent-dim': '#00d4aa33',
+    purple: '#a855f7', blue: '#3b82f6',
+  }, fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }, }}
+}
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0a14; font-family: 'Inter', system-ui, sans-serif; color: #c8c8d4; }
+.section { background: #1a1a2e; border-radius: 16px; padding: 1.5rem; border: 1px solid #252540; margin-bottom: 1rem; }
+.section-title { font-size: 0.85rem; font-weight: 600; color: #a8a8c0; letter-spacing: 0.01em; margin-bottom: 1rem; }
+.field { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid #25254044; }
+.field:last-child { border-bottom: none; }
+.field-label { font-size: 0.8rem; color: #8888a0; }
+.field-desc { font-size: 0.7rem; color: #555570; }
+.field-input { background: #12121e; border: 1px solid #252540; border-radius: 8px; padding: 0.4rem 0.7rem; color: #e2e8f0; font-size: 0.8rem; width: 120px; text-align: right; }
+.field-input:focus { outline: none; border-color: #00d4aa; }
+.btn-save { background: #00d4aa; color: #0a0a14; font-weight: 600; font-size: 0.85rem; padding: 0.6rem 1.5rem; border-radius: 10px; border: none; cursor: pointer; transition: opacity 0.15s; }
+.btn-save:hover { opacity: 0.85; }
+.btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+.toast { position: fixed; bottom: 2rem; right: 2rem; background: #00d4aa; color: #0a0a14; padding: 0.75rem 1.25rem; border-radius: 12px; font-weight: 600; font-size: 0.85rem; opacity: 0; transition: opacity 0.3s; }
+.toast.show { opacity: 1; }
+.toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }
+.toggle input { display: none; }
+.toggle-slider { position: absolute; inset: 0; background: #252540; border-radius: 10px; transition: background 0.2s; }
+.toggle-slider::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #6a6a8a; top: 2px; left: 2px; transition: 0.2s; }
+.toggle input:checked + .toggle-slider { background: #00d4aa44; }
+.toggle input:checked + .toggle-slider::after { background: #00d4aa; transform: translateX(16px); }
+</style>
+</head>
+<body>
+<div class="max-w-2xl mx-auto px-4 py-6">
+  <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center gap-3">
+      <a href="/" class="text-gray-600 hover:text-gray-400"><svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></a>
+      <h1 class="text-lg font-bold text-white">Settings</h1>
+    </div>
+    <button id="saveBtn" class="btn-save" onclick="saveSettings()">Save</button>
+  </div>
+  <div id="settingsForm"></div>
+  <div id="toast" class="toast">Saved</div>
+</div>
+<script>
+let currentSettings = {};
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    currentSettings = await res.json();
+    renderForm(currentSettings);
+  } catch(e) { document.getElementById('settingsForm').innerHTML = '<div class="section text-center text-gray-600">Failed to load settings</div>'; }
+}
+
+function renderForm(cfg) {
+  const form = document.getElementById('settingsForm');
+  form.innerHTML = `
+    <div class="section">
+      <div class="section-title">General</div>
+      <div class="field"><div><div class="field-label">Port</div><div class="field-desc">API server port (requires restart)</div></div><input class="field-input" type="number" id="port" value="${cfg.general.port}"></div>
+      <div class="field"><div><div class="field-label">Log Level</div><div class="field-desc">info, debug, warn, error</div></div><input class="field-input" type="text" id="log_level" value="${cfg.general.log_level}"></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Polling</div>
+      <div class="field"><div><div class="field-label">Interval</div><div class="field-desc">Seconds between focus polls</div></div><input class="field-input" type="number" id="interval_secs" value="${cfg.polling.interval_secs}" min="1" max="60"></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Deduplication</div>
+      <div class="field"><div><div class="field-label">Threshold</div><div class="field-desc">Cosine similarity 0.0-1.0</div></div><input class="field-input" type="number" id="threshold" value="${cfg.dedup.threshold}" step="0.01" min="0" max="1"></div>
+      <div class="field"><div><div class="field-label">Window Size</div><div class="field-desc">Recent vectors to compare</div></div><input class="field-input" type="number" id="last_n" value="${cfg.dedup.last_n}" min="1" max="100"></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Encoders</div>
+      <div class="field"><div><div class="field-label">Text (MiniLM)</div><div class="field-desc">Semantic text embeddings</div></div><label class="toggle"><input type="checkbox" id="enc_text" ${cfg.encoders.text ? 'checked' : ''}><div class="toggle-slider"></div></label></div>
+      <div class="field"><div><div class="field-label">Vision (SigLIP)</div><div class="field-desc">Image embeddings from screenshots</div></div><label class="toggle"><input type="checkbox" id="enc_vision" ${cfg.encoders.vision ? 'checked' : ''}><div class="toggle-slider"></div></label></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Retention</div>
+      <div class="field"><div><div class="field-label">Max Events</div><div class="field-desc">Auto-prune oldest events when exceeded</div></div><input class="field-input" type="number" id="max_events" value="${cfg.retention.max_events}" min="0"></div>
+    </div>
+  `;
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const body = {
+    general: {
+      port: parseInt(document.getElementById('port').value) || 2198,
+      log_level: document.getElementById('log_level').value || 'info',
+    },
+    polling: {
+      interval_secs: parseInt(document.getElementById('interval_secs').value) || 2,
+    },
+    dedup: {
+      threshold: parseFloat(document.getElementById('threshold').value) || 0.95,
+      last_n: parseInt(document.getElementById('last_n').value) || 5,
+    },
+    encoders: {
+      text: document.getElementById('enc_text').checked,
+      vision: document.getElementById('enc_vision').checked,
+    },
+    retention: {
+      max_events: parseInt(document.getElementById('max_events').value) || 10000,
+    },
+  };
+  try {
+    const res = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    currentSettings = await res.json();
+    const toast = document.getElementById('toast');
+    toast.textContent = 'Saved';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  } catch(e) {
+    const toast = document.getElementById('toast');
+    toast.textContent = 'Error: ' + e.message;
+    toast.classList.add('show');
+    toast.style.background = '#ef4444';
+    setTimeout(() => { toast.classList.remove('show'); toast.style.background = '#00d4aa'; }, 3000);
+  }
+  btn.disabled = false; btn.textContent = 'Save';
+}
+
+loadSettings();
+</script>
+</body>
+</html>
