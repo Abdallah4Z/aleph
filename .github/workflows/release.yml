@@ -4,6 +4,9 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,11 +26,9 @@ jobs:
         run: |
           mkdir -p aleph-x86_64-linux
           cp target/release/aleph aleph-x86_64-linux/
-          cp install.sh aleph-x86_64-linux/
           tar czf aleph-x86_64-linux.tar.gz aleph-x86_64-linux/
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: aleph-x86_64-linux.tar.gz
-          generate_release_notes: true
