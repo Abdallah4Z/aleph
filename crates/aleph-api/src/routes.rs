@@ -143,6 +143,22 @@ async fn put_settings(Json(updates): Json<serde_json::Value>) -> Result<Json<ale
     if let Some(level) = updates.get("general").and_then(|g| g.get("log_level")).and_then(|v| v.as_str()) {
         cfg.general.log_level = level.to_string();
     }
+    if let Some(llm) = updates.get("llm") {
+        if let Some(provider) = llm.get("provider").and_then(|v| v.as_str()) {
+            cfg.llm.provider = provider.to_string();
+        }
+        if let Some(model) = llm.get("model").and_then(|v| v.as_str()) {
+            cfg.llm.model = model.to_string();
+        }
+        if let Some(key) = llm.get("api_key").and_then(|v| v.as_str()) {
+            if !key.is_empty() {
+                cfg.llm.api_key = key.to_string();
+            }
+        }
+        if let Some(url) = llm.get("base_url").and_then(|v| v.as_str()) {
+            cfg.llm.base_url = url.to_string();
+        }
+    }
 
     cfg.save().map_err(|e| {
         error!("Failed to save config: {}", e);

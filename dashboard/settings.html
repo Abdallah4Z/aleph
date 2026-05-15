@@ -89,7 +89,38 @@ function renderForm(cfg) {
       <div class="section-title">Retention</div>
       <div class="field"><div><div class="field-label">Max Events</div><div class="field-desc">Auto-prune oldest events when exceeded</div></div><input class="field-input" type="number" id="max_events" value="${cfg.retention.max_events}" min="0"></div>
     </div>
+    <div class="section">
+      <div class="section-title">LLM Provider</div>
+      <div class="field"><div><div class="field-label">Provider</div><div class="field-desc">ollama, openai, openrouter, groq</div></div>
+        <select class="field-input" id="llm_provider" style="text-align:left;width:140px" onchange="updateLlmUrl()">
+          <option value="ollama" ${cfg.llm.provider==='ollama'?'selected':''}>Ollama</option>
+          <option value="openai" ${cfg.llm.provider==='openai'?'selected':''}>OpenAI</option>
+          <option value="openrouter" ${cfg.llm.provider==='openrouter'?'selected':''}>OpenRouter</option>
+          <option value="groq" ${cfg.llm.provider==='groq'?'selected':''}>Groq</option>
+        </select>
+      </div>
+      <div class="field"><div><div class="field-label">Model</div><div class="field-desc">e.g. qwen2.5:0.5b, gpt-4o-mini</div></div><input class="field-input" type="text" id="llm_model" value="${cfg.llm.model}" style="text-align:left;width:200px"></div>
+      <div class="field"><div><div class="field-label">Base URL</div><div class="field-desc">API endpoint</div></div><input class="field-input" type="text" id="llm_url" value="${cfg.llm.base_url}" style="text-align:left;width:280px"></div>
+      <div class="field"><div><div class="field-label">API Key</div><div class="field-desc">Leave blank if not required</div></div><input class="field-input" type="password" id="llm_key" value="${cfg.llm.api_key}" style="text-align:left;width:280px"></div>
+    </div>
   `;
+  // also set the onchange for provider dropdown
+  window.updateLlmUrl = function() {
+    const p = document.getElementById('llm_provider').value;
+    const urlField = document.getElementById('llm_url');
+    const defaults = {
+      ollama: 'http://localhost:11434',
+      openai: 'https://api.openai.com',
+      openrouter: 'https://openrouter.ai/api',
+      groq: 'https://api.groq.com/openai',
+    };
+    if (urlField && defaults[p] && !urlField.dataset.userEdited) {
+      urlField.value = defaults[p];
+    }
+  };
+  document.getElementById('llm_url')?.addEventListener('input', function() {
+    this.dataset.userEdited = 'true';
+  });
 }
 
 async function saveSettings() {
@@ -113,6 +144,12 @@ async function saveSettings() {
     },
     retention: {
       max_events: parseInt(document.getElementById('max_events').value) || 10000,
+    },
+    llm: {
+      provider: document.getElementById('llm_provider').value || 'ollama',
+      model: document.getElementById('llm_model').value || 'qwen2.5:0.5b',
+      base_url: document.getElementById('llm_url').value || 'http://localhost:11434',
+      api_key: document.getElementById('llm_key').value || '',
     },
   };
   try {

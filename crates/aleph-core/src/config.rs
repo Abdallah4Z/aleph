@@ -14,6 +14,7 @@ pub struct Config {
     pub encoders: EncodersConfig,
     pub retention: RetentionConfig,
     pub dashboard: DashboardConfig,
+    pub llm: LlmConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +51,14 @@ pub struct DashboardConfig {
     pub theme: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+    pub provider: String,
+    pub model: String,
+    pub api_key: String,
+    pub base_url: String,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -74,6 +83,12 @@ impl Default for Config {
             retention: RetentionConfig { max_events: 10000 },
             dashboard: DashboardConfig {
                 theme: "dark".into(),
+            },
+            llm: LlmConfig {
+                provider: "ollama".into(),
+                model: "qwen2.5:0.5b".into(),
+                api_key: String::new(),
+                base_url: "http://localhost:11434".into(),
             },
         }
     }
@@ -174,6 +189,18 @@ impl Config {
         self.encoders.vision = other.encoders.vision;
         if other.dashboard.theme != Config::default().dashboard.theme {
             self.dashboard.theme = other.dashboard.theme;
+        }
+        if other.llm.provider != Config::default().llm.provider {
+            self.llm.provider = other.llm.provider;
+        }
+        if other.llm.model != Config::default().llm.model {
+            self.llm.model = other.llm.model;
+        }
+        if !other.llm.api_key.is_empty() {
+            self.llm.api_key = other.llm.api_key;
+        }
+        if other.llm.base_url != Config::default().llm.base_url {
+            self.llm.base_url = other.llm.base_url;
         }
     }
 
