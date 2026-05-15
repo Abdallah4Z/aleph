@@ -168,7 +168,7 @@ async fn ask_handler(
     );
 
     let config = Config::global();
-    let answer = match aleph_core::llm::ask_llm(config, system_prompt, &user_prompt) {
+    let answer = match aleph_core::llm::ask_llm(&config, system_prompt, &user_prompt) {
         Ok(a) => a,
         Err(e) => {
             // Fallback to just returning the raw context
@@ -299,7 +299,8 @@ async fn daily_summary_for_date(db: &Database, date: &str) -> Result<Json<DailyS
         context
     );
 
-    let summary = match aleph_core::llm::ask_llm(Config::global(),
+    let config = Config::global();
+    let summary = match aleph_core::llm::ask_llm(&config,
         "You are a daily activity summarizer. Return only the summary, no preamble.", &prompt)
     {
         Ok(s) => s,

@@ -152,13 +152,13 @@ async fn start_daemon() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
-    aleph_daemon::run_daemon(config).await
+    aleph_daemon::run_daemon(&config).await
 }
 
 async fn start_api() -> anyhow::Result<()> {
     let config = aleph_core::Config::init_global()?;
     aleph_core::Config::init_default()?;
-    aleph_api::run_api(config).await
+    aleph_api::run_api(&config).await
 }
 
 async fn stop() -> anyhow::Result<()> {

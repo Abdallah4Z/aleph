@@ -1,9 +1,9 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
+static CONFIG: Mutex<Option<Config>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -214,18 +214,17 @@ impl Config {
         Ok(cfg)
     }
 
-    /// Load once and cache globally.
-    pub fn global() -> &'static Config {
-        CONFIG.get_or_init(|| {
-            Config::load().unwrap_or_default()
-        })
+    /// Load config from cache or freshly if not cached.
+    pub fn global() -> Config {
+        let guard = CONFIG.lock().unwrap();
+        guard.clone().unwrap_or_default()
     }
 
-    /// Initialize global config (call at startup).
-    pub fn init_global() -> Result<&'static Config> {
+    /// Initialize global config (call at startup or after saving).
+    pub fn init_global() -> Result<Config> {
         let cfg = Config::load()?;
-        CONFIG.set(cfg).ok();
-        Ok(Config::global())
+        *CONFIG.lock().unwrap() = Some(cfg.clone());
+        Ok(cfg)
     }
 
     /// Save current config to file, creating parent dirs.
