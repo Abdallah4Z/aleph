@@ -58,6 +58,7 @@ dependencies = [
  "aleph-core",
  "aleph-daemon",
  "anyhow",
+ "byteorder",
  "chrono",
  "clap",
  "crossterm",

@@ -24,3 +24,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 ureq = { version = "3", features = ["json"] }
+byteorder = "1"

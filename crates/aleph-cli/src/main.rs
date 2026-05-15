@@ -1,4 +1,5 @@
 mod tui;
+mod listen;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -28,6 +29,8 @@ enum Commands {
     Doctor,
     /// Open terminal dashboard (TUI)
     Dashboard,
+    /// Listen mode: voice queries via microphone
+    Listen,
     /// Pause capture (stop recording)
     Pause,
     /// Resume capture
@@ -71,6 +74,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Dashboard => {
             tui::run_dashboard()?;
             Ok(())
+        }
+        Commands::Listen => {
+            listen::run_listen_loop()
         }
         Commands::Pause => {
             set_capture(false).await
