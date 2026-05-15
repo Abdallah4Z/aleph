@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "aleph", about = "Aleph — Context Store for your desktop", version)]
@@ -19,6 +20,10 @@ enum Commands {
     Stop,
     /// Check if Aleph is running
     Status,
+    /// Show recent logs (journalctl)
+    Logs,
+    /// Diagnose common issues
+    Doctor,
     /// Manage configuration
     Config {
         #[command(subcommand)]
@@ -53,6 +58,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Api => start_api().await,
         Commands::Stop => stop().await,
         Commands::Status => status().await,
+        Commands::Logs => logs().await,
+        Commands::Doctor => doctor().await,
         Commands::Config { action } => match action {
             ConfigCommands::Init => config_init(),
             ConfigCommands::Show => config_show(),
@@ -142,6 +149,137 @@ async fn status() -> anyhow::Result<()> {
         }
         Err(_) => println!("Could not check status (systemctl not available)."),
     }
+    Ok(())
+}
+
+async fn logs() -> anyhow::Result<()> {
+    let status = std::process::Command::new("journalctl")
+        .args(["--user", "-u", "aleph", "-n", "50", "--no-pager", "-o", "short"])
+        .status();
+    match status {
+        Ok(_) => {}
+        Err(_) => eprintln!("Could not fetch logs (journalctl not available)."),
+    }
+    Ok(())
+}
+
+async fn doctor() -> anyhow::Result<()> {
+
+    println!("Aleph Diagnostics");
+    println!("══════════════════");
+    println!();
+
+    // 1. Binary
+    let bin_path = std::env::current_exe().ok();
+    if let Some(p) = &bin_path {
+        let meta = std::fs::metadata(p).ok();
+        let size = meta.map(|m| m.len() / 1_048_576).unwrap_or(0);
+        println!("  ✓ Binary: {} ({} MB)", p.display(), size);
+    } else {
+        println!("  ✗ Binary: unknown path");
+    }
+
+    // 2. Config
+    let config_path = aleph_core::Config::config_path();
+    if config_path.exists() {
+        match aleph_core::Config::load() {
+            Ok(cfg) => {
+                println!("  ✓ Config: {} (valid)", config_path.display());
+                println!("    Port: {}", cfg.general.port);
+                println!("    Data dir: {}", cfg.general.data_dir);
+                println!("    Log level: {}", cfg.general.log_level);
+                println!("    Poll interval: {}s", cfg.polling.interval_secs);
+            }
+            Err(e) => println!("  ✗ Config: {} (invalid: {})", config_path.display(), e),
+        }
+    } else {
+        println!("  ✗ Config: not found at {}", config_path.display());
+    }
+
+    // 3. Data dir
+    let cfg = aleph_core::Config::load().unwrap_or_default();
+    let data_dir = cfg.data_dir();
+    if data_dir.exists() {
+        println!("  ✓ Data dir: {}", data_dir.display());
+    } else {
+        println!("  ✗ Data dir: not found at {}", data_dir.display());
+    }
+
+    // 4. Models
+    let models_dir = cfg.models_dir();
+    let minilm_dir = models_dir.join("all-MiniLM-L6-v2");
+    let siglip_dir = models_dir.join("siglip");
+
+    let minilm_ok = minilm_dir.join("model.safetensors").exists() && minilm_dir.join("config.json").exists();
+    let siglip_ok = siglip_dir.join("model.safetensors").exists() && siglip_dir.join("config.json").exists();
+
+    if minilm_ok {
+        let size = std::fs::metadata(minilm_dir.join("model.safetensors"))
+            .map(|m| m.len() / 1_048_576).unwrap_or(0);
+        println!("  ✓ MiniLM: {} ({} MB)", minilm_dir.display(), size);
+    } else {
+        println!("  ✗ MiniLM: missing or incomplete at {}", minilm_dir.display());
+    }
+
+    if siglip_ok {
+        let size = std::fs::metadata(siglip_dir.join("model.safetensors"))
+            .map(|m| m.len() / 1_048_576).unwrap_or(0);
+        println!("  ✓ SigLIP: {} ({} MB)", siglip_dir.display(), size);
+    } else {
+        println!("  ✗ SigLIP: missing or incomplete at {}", siglip_dir.display());
+    }
+
+    // 5. Port available
+    let port = cfg.general.port;
+    let port_available = std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok();
+    if port_available {
+        println!("  ✓ Port {}: available", port);
+    } else {
+        println!("  ⚠ Port {}: already in use (Aleph may already be running)", port);
+    }
+
+    // 6. DISPLAY / X11
+    let display = std::env::var("DISPLAY").unwrap_or_default();
+    if !display.is_empty() {
+        println!("  ✓ DISPLAY: {}", display);
+    } else {
+        println!("  ⚠ DISPLAY: not set (xcap screen capture unavailable)");
+    }
+
+    // 7. Systemd service
+    let svc_path = aleph_core::Config::config_dir().join("aleph.service");
+    // also check the systemd user path
+    let svc_path2 = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.config"))
+        .join("systemd/user/aleph.service");
+    let svc_exists = svc_path.exists() || svc_path2.exists();
+    if svc_exists {
+        println!("  ✓ Service file: {}", svc_path.display());
+        let active = std::process::Command::new("systemctl")
+            .args(["--user", "is-active", "aleph"])
+            .output();
+        match active {
+            Ok(out) => {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if s == "active" {
+                    println!("  ✓ Service: active");
+                } else {
+                    println!("  ⚠ Service: {}", s);
+                }
+            }
+            Err(_) => println!("  ⚠ Service: could not check (systemctl not available)"),
+        }
+    } else {
+        println!("  ✗ Service file: not found at {}", svc_path.display());
+    }
+
+    // 8. API reachability
+    match std::net::TcpStream::connect(format!("127.0.0.1:{}", port)) {
+        Ok(_) => println!("  ✓ API: http://127.0.0.1:{}/ accepts connections", port),
+        Err(_) => println!("  ✗ API: http://127.0.0.1:{}/ not reachable (is Aleph running?)", port),
+    }
+
+    println!();
     Ok(())
 }
 

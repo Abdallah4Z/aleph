@@ -17,3 +17,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
+dirs = "6"
