@@ -66,6 +66,7 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
         .route("/api/daily-summary/{date}", get(daily_summary_handler))
         .route("/api/daily-summary/today", get(today_summary_handler))
         .route("/api/ingest/browser", post(browser_ingest_handler))
+        .route("/api/sessions", get(sessions_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -335,6 +336,23 @@ async fn browser_ingest_handler(
         count += 1;
     }
     Ok(Json(serde_json::json!({"ingested": count})))
+}
+
+// ---------------------------------------------------------------------------
+// Sessions endpoint — time-grouped activity sessions
+// ---------------------------------------------------------------------------
+
+async fn sessions_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<aleph_core::session::Session>>, StatusCode> {
+    let limit = 500;
+    let events = state.db.get_recent_events(limit).await.map_err(|e| {
+        error!("Failed to fetch events for sessions: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let sessions = aleph_core::session::detect_sessions(&events);
+    Ok(Json(sessions))
 }
 
 const DASHBOARD_HTML: &str = include_str!("../../../dashboard/index.html");
