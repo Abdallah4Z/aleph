@@ -50,6 +50,12 @@ pub struct SourceMetadata {
     pub end_time: Option<i64>,
     /// Either `"text"` or `"vision"`.
     pub source_type: String,
+    /// Code file path if detected, e.g. "main.rs"
+    pub code_file: Option<String>,
+    /// Project name if detected, e.g. "aleph"
+    pub code_project: Option<String>,
+    /// Git branch if detected, e.g. "main"
+    pub code_branch: Option<String>,
 }
 
 /// Request body for `POST /query`.
@@ -155,4 +161,8 @@ pub struct RecentEvent {
     pub end_time: Option<i64>,
     pub duration_ms: i64,
     pub source_type: String,
+    pub category: Option<String>,
+    pub code_file: Option<String>,
+    pub code_project: Option<String>,
+    pub code_branch: Option<String>,
 }

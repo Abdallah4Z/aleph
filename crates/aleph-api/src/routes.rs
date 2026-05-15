@@ -176,6 +176,9 @@ async fn ask_handler(
         start_time: ev.start_time,
         end_time: ev.end_time,
         source_type: ev.source_type,
+        code_file: ev.code_file,
+        code_project: ev.code_project,
+        code_branch: ev.code_branch,
     }).collect();
 
     Ok(Json(AskResponse { answer, sources }))

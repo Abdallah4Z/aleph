@@ -62,7 +62,10 @@ impl Database {
                 end_time    INTEGER,
                 content_hash TEXT,
                 source_type TEXT CHECK(source_type IN ('text', 'vision')) NOT NULL,
-                category    TEXT DEFAULT 'other'
+                category    TEXT DEFAULT 'other',
+                code_file   TEXT,
+                code_project TEXT,
+                code_branch TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_start_time ON context_events(start_time);
             CREATE INDEX IF NOT EXISTS idx_content_hash ON context_events(content_hash);
@@ -109,13 +112,16 @@ impl Database {
         source_type: &str,
         content_hash: Option<&str>,
         category: Option<&str>,
+        code_file: Option<&str>,
+        code_project: Option<&str>,
+        code_branch: Option<&str>,
     ) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
         let cat = category.unwrap_or("other");
         let result = sqlx::query(
             r#"
-            INSERT INTO context_events (app_name, window_title, start_time, end_time, content_hash, source_type, category)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO context_events (app_name, window_title, start_time, end_time, content_hash, source_type, category, code_file, code_project, code_branch)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
         )
         .bind(app_name)
@@ -125,6 +131,9 @@ impl Database {
         .bind(content_hash)
         .bind(source_type)
         .bind(cat)
+        .bind(code_file)
+        .bind(code_project)
+        .bind(code_branch)
         .execute(&self.sqlite)
         .await?;
 
@@ -275,6 +284,9 @@ impl Database {
                     start_time: row.get("start_time"),
                     end_time: row.get("end_time"),
                     source_type: row.get::<String, _>("source_type"),
+                    code_file: row.get("code_file"),
+                    code_project: row.get("code_project"),
+                    code_branch: row.get("code_branch"),
                 };
                 sources.push(meta.clone());
                 context.push(ContextChunk {
@@ -364,14 +376,14 @@ impl Database {
 
     pub async fn get_recent_events(&self, limit: i64) -> Result<Vec<RecentEvent>> {
         #[derive(sqlx::FromRow)]
-        struct Row { id: i64, app_name: String, window_title: String, start_time: i64, end_time: Option<i64>, source_type: String }
+        struct Row { id: i64, app_name: String, window_title: String, start_time: i64, end_time: Option<i64>, source_type: String, category: Option<String>, code_file: Option<String>, code_project: Option<String>, code_branch: Option<String> }
         let rows: Vec<Row> = sqlx::query_as(
-            "SELECT id, app_name, window_title, start_time, end_time, source_type
+            "SELECT id, app_name, window_title, start_time, end_time, source_type, category, code_file, code_project, code_branch
              FROM context_events ORDER BY start_time DESC LIMIT ?1",
         ).bind(limit).fetch_all(&self.sqlite).await?;
         Ok(rows.into_iter().map(|r| {
             let duration_ms = r.end_time.unwrap_or(r.start_time) - r.start_time;
-            RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type }
+            RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type, category: r.category, code_file: r.code_file, code_project: r.code_project, code_branch: r.code_branch }
         }).collect())
     }
 
@@ -423,10 +435,10 @@ impl Database {
     /// Returns up to `limit` matching events ordered by recency.
     pub async fn keyword_search(&self, query: &str, limit: i64) -> Result<Vec<RecentEvent>> {
         #[derive(sqlx::FromRow)]
-        struct Row { id: i64, app_name: String, window_title: String, start_time: i64, end_time: Option<i64>, source_type: String }
+        struct Row { id: i64, app_name: String, window_title: String, start_time: i64, end_time: Option<i64>, source_type: String, category: Option<String>, code_file: Option<String>, code_project: Option<String>, code_branch: Option<String> }
         let pattern = format!("%{}%", query);
         let rows: Vec<Row> = sqlx::query_as(
-            "SELECT id, app_name, window_title, start_time, end_time, source_type
+            "SELECT id, app_name, window_title, start_time, end_time, source_type, category, code_file, code_project, code_branch
              FROM context_events
              WHERE window_title LIKE ?1 OR app_name LIKE ?1
              ORDER BY start_time DESC LIMIT ?2",
@@ -437,7 +449,7 @@ impl Database {
         .await?;
         Ok(rows.into_iter().map(|r| {
             let duration_ms = r.end_time.unwrap_or(r.start_time) - r.start_time;
-            RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type }
+            RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type, category: r.category, code_file: r.code_file, code_project: r.code_project, code_branch: r.code_branch }
         }).collect())
     }
 }

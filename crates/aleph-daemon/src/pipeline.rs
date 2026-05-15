@@ -97,9 +97,13 @@ impl Pipeline {
         }
 
         let category = Self::classify(app, title);
+        let code = aleph_core::codecontext::parse_code_context(app, title);
         let meta_id = self
             .db
-            .insert_event(app, title, "text", Some(&format!("{:x}", hash)), Some(category))
+            .insert_event(app, title, "text", Some(&format!("{:x}", hash)), Some(category),
+                code.as_ref().and_then(|c| c.file.as_deref()),
+                code.as_ref().and_then(|c| c.project.as_deref()),
+                code.as_ref().and_then(|c| c.branch.as_deref()))
             .await?;
 
         self.db
@@ -128,9 +132,13 @@ impl Pipeline {
         }
 
         let category = Self::classify(app, title);
+        let code = aleph_core::codecontext::parse_code_context(app, title);
         let meta_id = self
             .db
-            .insert_event(app, title, "vision", Some(&format!("{:x}", hash)), Some(category))
+            .insert_event(app, title, "vision", Some(&format!("{:x}", hash)), Some(category),
+                code.as_ref().and_then(|c| c.file.as_deref()),
+                code.as_ref().and_then(|c| c.project.as_deref()),
+                code.as_ref().and_then(|c| c.branch.as_deref()))
             .await?;
 
         // Store screenshot PNG
