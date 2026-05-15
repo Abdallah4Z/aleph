@@ -33,6 +33,17 @@ info "Checking system requirements..."
 command -v curl &>/dev/null || fail "curl is required. Install it first."
 command -v tar &>/dev/null  || fail "tar is required."
 command -v systemctl &>/dev/null || fail "systemd is required. Aleph installs as a systemd user service."
+
+# --- Architecture detection ---
+ARCH="$(uname -m)"
+case "${ARCH}" in
+  x86_64)  ALEPH_ARCH="x86_64-linux" ;;
+  aarch64|arm64) ALEPH_ARCH="aarch64-linux" ;;
+  *)
+    fail "Unsupported architecture: ${ARCH}. Aleph currently supports x86_64 and aarch64."
+    ;;
+esac
+info "Detected architecture: ${ARCH}"
 echo ""
 
 # --- Detect display ---
@@ -74,11 +85,11 @@ header "2. Aleph Binary"
 mkdir -p "${BIN_DIR}"
 
 if [ "${VERSION}" = "latest" ]; then
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/aleph-x86_64-linux.tar.gz"
-  info "Fetching latest release..."
+  DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/aleph-${ALEPH_ARCH}.tar.gz"
+  info "Fetching latest release (${ALEPH_ARCH})..."
 else
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/aleph-x86_64-linux.tar.gz"
-  info "Fetching release ${VERSION}..."
+  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/aleph-${ALEPH_ARCH}.tar.gz"
+  info "Fetching release ${VERSION} (${ALEPH_ARCH})..."
 fi
 
 # Follow redirects and show progress
@@ -86,7 +97,7 @@ curl -#fSL "${DOWNLOAD_URL}" -o /tmp/aleph.tar.gz || fail "Failed to download Al
 log "Downloaded Aleph tarball ($(du -h /tmp/aleph.tar.gz | cut -f1))"
 
 tar xzf /tmp/aleph.tar.gz -C /tmp/ || fail "Failed to extract tarball"
-cp /tmp/aleph-x86_64-linux/aleph "${BIN_DIR}/aleph"
+cp /tmp/aleph-${ALEPH_ARCH}/aleph "${BIN_DIR}/aleph"
 chmod +x "${BIN_DIR}/aleph"
 rm -f /tmp/aleph.tar.gz
 log "Installed to ${BIN_DIR}/aleph ($(du -h ${BIN_DIR}/aleph | cut -f1))"

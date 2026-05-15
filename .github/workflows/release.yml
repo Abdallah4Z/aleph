@@ -1,11 +1,8 @@
-name: Release
+name: Build
 
 on:
   push:
     tags: ["v*"]
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -24,11 +21,12 @@ jobs:
 
       - name: Create tarball
         run: |
-          mkdir -p aleph-x86_64-linux
-          cp target/release/aleph aleph-x86_64-linux/
-          tar czf aleph-x86_64-linux.tar.gz aleph-x86_64-linux/
+          ARCHIVE="aleph-x86_64-linux"
+          mkdir -p "${ARCHIVE}"
+          cp target/release/aleph "${ARCHIVE}/"
+          tar czf "${ARCHIVE}.tar.gz" "${ARCHIVE}/"
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          files: aleph-x86_64-linux.tar.gz
+          name: aleph-x86_64-linux
+          path: aleph-x86_64-linux.tar.gz

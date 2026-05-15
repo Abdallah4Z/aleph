@@ -8,6 +8,7 @@ use pipeline::Pipeline;
 use tracing_subscriber::EnvFilter;
 
 pub async fn run_daemon(config: &Config) -> Result<()> {
+    eprintln!("aleph: daemon: initializing tracing...");
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env()
@@ -21,11 +22,14 @@ pub async fn run_daemon(config: &Config) -> Result<()> {
         .init();
 
     let data_dir = config.data_dir();
+    eprintln!("aleph: daemon: data dir: {:?}", data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
+    eprintln!("aleph: daemon: starting focus extractor...");
     let extractor = atspi::AtSpiExtractor;
     let rx = extractor.subscribe_focus().await?;
 
+    eprintln!("aleph: daemon: loading text encoder...");
     let text_encoder: Box<dyn aleph_core::TextEncoder> = {
         let cache = config.models_dir().join("all-MiniLM-L6-v2");
         if config.encoders.text && cache.join("model.safetensors").exists() {
@@ -45,6 +49,7 @@ pub async fn run_daemon(config: &Config) -> Result<()> {
         }
     };
 
+    eprintln!("aleph: daemon: loading vision encoder...");
     let vision_encoder: Box<dyn aleph_core::VisionEncoder> = {
         let cache = config.models_dir().join("siglip");
         if config.encoders.vision {
@@ -60,6 +65,7 @@ pub async fn run_daemon(config: &Config) -> Result<()> {
         }
     };
 
+    eprintln!("aleph: daemon: starting pipeline...");
     let mut pipeline = Pipeline::new(data_dir, text_encoder, vision_encoder).await?;
     pipeline.run(rx).await?;
 

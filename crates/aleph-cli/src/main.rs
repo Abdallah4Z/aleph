@@ -73,8 +73,22 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn start_both() -> anyhow::Result<()> {
-    let config = aleph_core::Config::init_global()?;
-    aleph_core::Config::init_default()?;
+    eprintln!("aleph: starting...");
+
+    let config = match aleph_core::Config::init_global() {
+        Ok(c) => {
+            eprintln!("aleph: config loaded");
+            c.clone()
+        }
+        Err(e) => {
+            eprintln!("aleph: config error: {}", e);
+            return Err(e);
+        }
+    };
+
+    if let Err(e) = aleph_core::Config::init_default() {
+        eprintln!("aleph: init_default error: {}", e);
+    }
 
     println!("  ┌─ Aleph ──────────────────────────────┐");
     println!("  │  Context Store for your desktop       │");

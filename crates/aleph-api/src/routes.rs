@@ -25,10 +25,13 @@ struct AppState {
 
 /// Start the Axum HTTP server on `127.0.0.1:{port}`.
 pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
+    eprintln!("aleph: api: creating data dir...");
     std::fs::create_dir_all(&data_dir)?;
 
+    eprintln!("aleph: api: opening database...");
     let db = Database::open(&data_dir).await?;
 
+    eprintln!("aleph: api: loading text encoder...");
     let text_encoder: Box<dyn TextEncoder + Send + Sync> = {
         let cache = data_dir.join("models").join("all-MiniLM-L6-v2");
         if cache.exists() {
@@ -61,9 +64,11 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    eprintln!("aleph: api: binding to {}...", addr);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    eprintln!("aleph: api: listening on http://{}", addr);
     info!("Context API listening on http://{}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
