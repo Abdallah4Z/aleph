@@ -56,18 +56,18 @@ case "$(uname -s)" in
     if command -v apt-get &>/dev/null; then
       info "Detected apt-based distro (Debian/Ubuntu)"
       sudo apt-get update -qq || warn "apt update failed, continuing..."
-      sudo apt-get install -y -qq libxcb1-dev libdbus-1-dev libxdo-dev libx11-dev protobuf-compiler || \
-        fail "Failed to install system dependencies. Try: sudo apt-get install libxcb1-dev libdbus-1-dev libxdo-dev libx11-dev protobuf-compiler"
+      sudo apt-get install -y -qq libxcb1-dev libdbus-1-dev libxdo-dev libx11-dev protobuf-compiler espeak-ng alsa-utils pulseaudio-utils python3 python3-pip python3-venv || \
+        fail "Failed to install system dependencies."
       log "System dependencies installed"
     elif command -v pacman &>/dev/null; then
       info "Detected Arch-based distro"
-      sudo pacman -S --noconfirm libxcb dbus libxdo libx11 protobuf || \
-        fail "Failed to install system dependencies. Try: sudo pacman -S libxcb dbus libxdo libx11 protobuf"
+      sudo pacman -S --noconfirm libxcb dbus libxdo libx11 protobuf espeak-ng alsa-utils pulseaudio python3 python-pip || \
+        fail "Failed to install system dependencies."
       log "System dependencies installed"
     elif command -v dnf &>/dev/null; then
       info "Detected Fedora-based distro"
-      sudo dnf install -y libxcb-devel dbus-devel libxdo-devel libX11-devel protobuf-compiler || \
-        fail "Failed to install system dependencies. Try: sudo dnf install libxcb-devel dbus-devel libxdo-devel libX11-devel protobuf-compiler"
+      sudo dnf install -y libxcb-devel dbus-devel libxdo-devel libX11-devel protobuf-compiler espeak-ng alsa-utils pulseaudio-utils python3 python3-pip || \
+        fail "Failed to install system dependencies."
       log "System dependencies installed"
     else
       warn "Unknown package manager. You may need to install build deps manually."
@@ -237,6 +237,50 @@ SERVICE
 log "Service file written to ${SERVICE_DIR}/aleph.service"
 echo ""
 
+# --- Install Python deps for voice AI ---
+header "6b. Voice AI (STT/TTS)"
+
+info "Installing Python packages for moonshine STT + TTS..."
+python3 -m pip install -q --upgrade pip 2>/dev/null || true
+python3 -m pip install -q torch transformers soundfile librosa onnxruntime numpy 2>/dev/null && \
+  log "Python ML packages installed (torch, transformers, onnxruntime)" || \
+  warn "Some Python ML packages failed. Voice features may be limited."
+
+# Pre-download moonshine-tiny model
+info "Pre-loading moonshine-tiny STT model..."
+python3 -c "
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+AutoModelForSpeechSeq2Seq.from_pretrained('UsefulSensors/moonshine-tiny')
+AutoProcessor.from_pretrained('UsefulSensors/moonshine-tiny')
+print('  ✓ moonshine-tiny cached')
+" 2>/dev/null && log "Moonshine STT model cached" || warn "Could not pre-load moonshine model (will download on first use)"
+
+echo ""
+
+# --- Install voice systemd service ---
+header "6c. Voice Assistant Service"
+
+mkdir -p "${SERVICE_DIR}"
+cat > "${SERVICE_DIR}/aleph-voice.service" << SERVICE
+[Unit]
+Description=Aleph — Voice Assistant (wake word "Aleph")
+After=graphical-session.target
+BindsTo=aleph.service
+After=aleph.service
+
+[Service]
+Type=simple
+ExecStart=${BIN_DIR}/aleph listen
+Restart=on-failure
+RestartSec=3
+Environment=DISPLAY=${DISPLAY_VAL}
+
+[Install]
+WantedBy=default.target
+SERVICE
+log "Voice service file written to ${SERVICE_DIR}/aleph-voice.service"
+echo ""
+
 # --- Ensure PATH includes ~/.local/bin ---
 header "7. Shell Setup"
 if ! echo "${PATH}" | tr ':' '\n' | grep -q "${BIN_DIR}"; then
@@ -258,15 +302,17 @@ echo ""
 header "8. Launching Aleph"
 
 systemctl --user daemon-reload || fail "systemctl daemon-reload failed"
-systemctl --user enable --now aleph || fail "Failed to start Aleph via systemd. Check: systemctl --user status aleph"
+systemctl --user enable --now aleph || fail "Failed to start Aleph. Check: systemctl --user status aleph"
+systemctl --user enable --now aleph-voice 2>/dev/null || warn "Voice service not started (install espeak-ng + alsa-utils for voice)"
 
 log "Aleph is running!"
 echo ""
 info "  Dashboard: ${BOLD}http://localhost:2198${NC}"
 info "  Settings:  ${BOLD}http://localhost:2198/settings${NC}"
+info "  Voice:     ${BOLD}Say \"Aleph\" or \"Okay Aleph\" to activate${NC}"
 info "  Config:    ${BOLD}${CONFIG_DIR}/config.toml${NC}"
 info "  Data:      ${BOLD}${DATA_DIR}${NC}"
 echo ""
-echo -e "  ${BOLD}Aleph is already capturing your screen context.${NC}"
-echo -e "  ${BOLD}Open the dashboard to see it in action.${NC}"
+echo -e "  ${BOLD}Aleph is capturing your screen + listening for wake word.${NC}"
+echo -e "  ${BOLD}Just say \"Aleph, what was I doing?\" out loud.${NC}"
 echo ""
