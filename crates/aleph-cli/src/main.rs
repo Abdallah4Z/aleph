@@ -1,3 +1,5 @@
+mod tui;
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -24,6 +26,8 @@ enum Commands {
     Logs,
     /// Diagnose common issues
     Doctor,
+    /// Open terminal dashboard (TUI)
+    Dashboard,
     /// Manage configuration
     Config {
         #[command(subcommand)]
@@ -60,6 +64,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status => status().await,
         Commands::Logs => logs().await,
         Commands::Doctor => doctor().await,
+        Commands::Dashboard => {
+            tui::run_dashboard()?;
+            Ok(())
+        }
         Commands::Config { action } => match action {
             ConfigCommands::Init => config_init(),
             ConfigCommands::Show => config_show(),
