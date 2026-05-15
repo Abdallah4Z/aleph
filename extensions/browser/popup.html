@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { width: 280px; padding: 16px; font-family: -apple-system, system-ui, sans-serif; background: #0a0a14; color: #c8c8d4; margin: 0; }
+.logo { font-size: 18px; font-weight: bold; color: #00d4aa; margin-bottom: 12px; }
+.status { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a1a2e; border-radius: 8px; border: 1px solid #252540; margin-bottom: 12px; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot.on { background: #00d4aa; }
+.dot.off { background: #ef4444; }
+.btn { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #252540; background: #1a1a2e; color: #c8c8d4; cursor: pointer; font-size: 13px; margin-bottom: 8px; }
+.btn:hover { border-color: #00d4aa44; }
+.btn.on { background: #00d4aa22; border-color: #00d4aa; color: #00d4aa; }
+.footer { font-size: 11px; color: #555570; text-align: center; margin-top: 8px; }
+a { color: #00d4aa; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="logo">Aleph</div>
+<div id="statusBar" class="status"><span class="dot on" id="statusDot"></span><span id="statusText">Connected</span></div>
+<button class="btn on" id="toggleBtn">● Capturing</button>
+<button class="btn" onclick="chrome.runtime.openOptionsPage()">⚙ Settings</button>
+<div class="footer"><a href="http://localhost:2198" target="_blank">Open Dashboard</a></div>
+
+<script src="popup.js"></script>
+</body>
+</html>

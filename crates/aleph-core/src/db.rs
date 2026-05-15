@@ -436,17 +436,38 @@ impl Database {
     pub async fn keyword_search(&self, query: &str, limit: i64) -> Result<Vec<RecentEvent>> {
         #[derive(sqlx::FromRow)]
         struct Row { id: i64, app_name: String, window_title: String, start_time: i64, end_time: Option<i64>, source_type: String, category: Option<String>, code_file: Option<String>, code_project: Option<String>, code_branch: Option<String> }
-        let pattern = format!("%{}%", query);
-        let rows: Vec<Row> = sqlx::query_as(
+
+        // Extract meaningful keywords (3+ chars, exclude common words)
+        let words: Vec<String> = query.split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+            .filter(|w| w.len() >= 3)
+            .map(|w| w.to_lowercase())
+            .collect();
+
+        if words.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Build OR conditions for each keyword
+        let conditions: Vec<String> = words.iter()
+            .map(|_| "(window_title LIKE ? OR app_name LIKE ?)".to_string())
+            .collect();
+        let sql = format!(
             "SELECT id, app_name, window_title, start_time, end_time, source_type, category, code_file, code_project, code_branch
              FROM context_events
-             WHERE window_title LIKE ?1 OR app_name LIKE ?1
-             ORDER BY start_time DESC LIMIT ?2",
-        )
-        .bind(&pattern)
-        .bind(limit)
-        .fetch_all(&self.sqlite)
-        .await?;
+             WHERE {}
+             ORDER BY start_time DESC LIMIT ?",
+            conditions.join(" OR ")
+        );
+
+        let mut q = sqlx::query_as::<_, Row>(&sql);
+        let patterns: Vec<String> = words.iter().map(|w| format!("%{}%", w)).collect();
+        for pat in &patterns {
+            q = q.bind(pat).bind(pat);
+        }
+        q = q.bind(limit);
+
+        let rows: Vec<Row> = q.fetch_all(&self.sqlite).await?;
         Ok(rows.into_iter().map(|r| {
             let duration_ms = r.end_time.unwrap_or(r.start_time) - r.start_time;
             RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type, category: r.category, code_file: r.code_file, code_project: r.code_project, code_branch: r.code_branch }

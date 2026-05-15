@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { font-family: -apple-system, system-ui, sans-serif; background: #0a0a14; color: #c8c8d4; padding: 24px; max-width: 480px; margin: 0 auto; }
+h1 { font-size: 20px; color: #00d4aa; margin-bottom: 20px; }
+h2 { font-size: 14px; color: #a8a8c0; margin: 16px 0 8px; }
+.section { background: #1a1a2e; border-radius: 12px; padding: 16px; border: 1px solid #252540; margin-bottom: 16px; }
+.field { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+.field label { font-size: 13px; }
+.desc { font-size: 11px; color: #555570; }
+input[type="text"], input[type="url"] { background: #0a0a14; border: 1px solid #252540; border-radius: 6px; padding: 6px 10px; color: #e2e8f0; font-size: 13px; width: 220px; }
+input:focus { outline: none; border-color: #00d4aa; }
+.toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }
+.toggle input { display: none; }
+.slider { position: absolute; inset: 0; background: #252540; border-radius: 10px; transition: 0.2s; }
+.slider::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #6a6a8a; top: 2px; left: 2px; transition: 0.2s; }
+.toggle input:checked + .slider { background: #00d4aa44; }
+.toggle input:checked + .slider::after { background: #00d4aa; transform: translateX(16px); }
+.btn { padding: 8px 20px; border-radius: 8px; border: none; background: #00d4aa; color: #0a0a14; font-weight: 600; font-size: 13px; cursor: pointer; }
+.btn:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+<h1>Aleph Extension Settings</h1>
+
+<div class="section">
+  <div class="field"><label>Extension Enabled</label><label class="toggle"><input type="checkbox" id="enabled"><div class="slider"></div></label></div>
+</div>
+
+<div class="section">
+  <h2>Capture Sources</h2>
+  <div class="field"><label>Tab switches &amp; navigation</label><label class="toggle"><input type="checkbox" id="captureTabs"><div class="slider"></div></label></div>
+  <div class="desc">Captures URLs and page titles when you switch or navigate tabs</div>
+  <div class="field" style="margin-top:8px"><label>Bookmarks</label><label class="toggle"><input type="checkbox" id="captureBookmarks"><div class="slider"></div></label></div>
+  <div class="desc">Captures URLs when you bookmark a page</div>
+  <div class="field" style="margin-top:8px"><label>History (periodic sync)</label><label class="toggle"><input type="checkbox" id="captureHistory"><div class="slider"></div></label></div>
+  <div class="desc">Syncs browsing history every 60 seconds</div>
+</div>
+
+<div class="section">
+  <h2>Aleph Server</h2>
+  <div class="field"><label>API URL</label><input type="url" id="apiUrl" value="http://127.0.0.1:2198"></div>
+  <div class="desc">Your local Aleph instance address</div>
+</div>
+
+<div style="text-align:right;margin-top:16px">
+  <button class="btn" onclick="save()">Save</button>
+</div>
+
+<script>
+const KEY = 'aleph_settings';
+
+async function load() {
+  const result = await chrome.storage.local.get(KEY);
+  const s = result[KEY] || {};
+  document.getElementById('enabled').checked = s.enabled !== false;
+  document.getElementById('captureTabs').checked = s.captureTabs !== false;
+  document.getElementById('captureBookmarks').checked = s.captureBookmarks !== false;
+  document.getElementById('captureHistory').checked = s.captureHistory !== false;
+  document.getElementById('apiUrl').value = s.apiUrl || 'http://127.0.0.1:2198';
+}
+
+async function save() {
+  const settings = {
+    enabled: document.getElementById('enabled').checked,
+    captureTabs: document.getElementById('captureTabs').checked,
+    captureBookmarks: document.getElementById('captureBookmarks').checked,
+    captureHistory: document.getElementById('captureHistory').checked,
+    apiUrl: document.getElementById('apiUrl').value || 'http://127.0.0.1:2198',
+  };
+  await chrome.storage.local.set({ [KEY]: settings });
+  alert('Saved');
+}
+
+load();
+</script>
+</body>
+</html>

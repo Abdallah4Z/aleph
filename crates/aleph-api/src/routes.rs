@@ -9,7 +9,7 @@ use axum::{
 };
 use std::borrow::Cow;
 use aleph_core::{
-    models::{QueryRequest, QueryResponse, OverviewStats, HourlyStat, DailyStat, AppStat, WindowStat, RecentEvent, AskRequest, AskResponse, CaptureStatus, DailySummaryResponse, SourceMetadata},
+    models::{QueryRequest, QueryResponse, OverviewStats, HourlyStat, DailyStat, AppStat, WindowStat, RecentEvent, AskRequest, AskResponse, CaptureStatus, DailySummaryResponse, BrowserEvent, SourceMetadata},
     Config, Database, TextEncoder,
 };
 use std::net::SocketAddr;
@@ -65,6 +65,7 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
         .route("/api/screenshots/{id}", get(screenshot_handler))
         .route("/api/daily-summary/{date}", get(daily_summary_handler))
         .route("/api/daily-summary/today", get(today_summary_handler))
+        .route("/api/ingest/browser", post(browser_ingest_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -296,6 +297,44 @@ async fn daily_summary_for_date(db: &Database, date: &str) -> Result<Json<DailyS
     }
 
     Ok(Json(DailySummaryResponse { date: date.to_string(), summary }))
+}
+
+// ---------------------------------------------------------------------------
+// Browser event ingestion
+// ---------------------------------------------------------------------------
+
+async fn browser_ingest_handler(
+    State(state): State<Arc<AppState>>,
+    Json(events): Json<Vec<BrowserEvent>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut count = 0;
+    for ev in &events {
+        let text = format!("{} — {}", ev.title, ev.url);
+        let category = "browsing";
+
+        let meta_id = match state.db.insert_event(
+            "browser", &ev.title, "text", None, Some(category),
+            None, None, None,
+        ).await {
+            Ok(id) => id,
+            Err(e) => {
+                error!("Failed to insert browser event: {}", e);
+                continue;
+            }
+        };
+
+        match state.text_encoder.encode(&text) {
+            Ok(vec) => {
+                if let Err(e) = state.db.insert_vector("text_vectors", meta_id, &vec).await {
+                    error!("Failed to store browser embedding: {}", e);
+                }
+            }
+            Err(e) => error!("Failed to encode browser event: {}", e),
+        }
+
+        count += 1;
+    }
+    Ok(Json(serde_json::json!({"ingested": count})))
 }
 
 const DASHBOARD_HTML: &str = include_str!("../../../dashboard/index.html");

@@ -111,6 +111,14 @@ pub struct DailySummaryResponse {
     pub summary: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserEvent {
+    pub url: String,
+    pub title: String,
+    pub source_type: String,
+    pub timestamp: Option<i64>,
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard / Stats models
 // ---------------------------------------------------------------------------
