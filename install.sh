@@ -179,7 +179,7 @@ base_url = "http://localhost:11434"
 
 [llm.providers.ollama_cloud]
 enabled = false
-model = "qwen2.5"
+model = "gemma4:31b-cloud"
 api_key = ""
 base_url = "https://api.ollama.cloud"
 

@@ -143,7 +143,7 @@ impl Default for Config {
                     },
                     ollama_cloud: ProviderConfig {
                         enabled: false,
-                        model: "qwen2.5".into(),
+                        model: "gemma4:31b-cloud".into(),
                         api_key: String::new(),
                         base_url: "https://api.ollama.cloud".into(),
                     },

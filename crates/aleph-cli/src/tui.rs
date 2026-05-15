@@ -5,23 +5,13 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 use crossterm::ExecutableCommand;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
 use std::io::stdout;
 use std::time::Duration;
 
 const API_BASE: &str = "http://127.0.0.1:2198";
-const LOGO: &str = r"
-▄▄▄       ██▓    ▓█████  ██▓███   ██░ ██
-▒████▄    ▓██▒    ▓█   ▀ ▓██░  ██▒▓██░ ██▒
-▒██  ▀█▄  ▒██░    ▒███   ▓██░ ██▓▒▒██▀▀██░
-░██▄▄▄▄██ ▒██░    ▒▓█  ▄ ▒██▄█▓▒ ░██▓ ░██
- ▓█   ▓██▒░██████▒░▒████▒▒██▒ ░  ░██▓ ░██▓
- ▒▒   ▓▒█░░ ▒░▓  ░░░ ▒░ ░▒▓▒░ ░  ░▒ ░ ░▒ ▒
-  ▒   ▒▒ ░░ ░ ▒  ░ ░ ░  ░░▒ ░     ░█  ░░ ░
-  ░   ▒     ░ ░      ░   ░░       ░█  ░░
-      ░  ░    ░  ░   ░  ░          ░";
 
 #[derive(PartialEq)]
 enum Tab {
@@ -40,40 +30,26 @@ struct DashboardData {
     config: String,
     llm_provider: String,
     llm_model: String,
-    llm_url: String,
     api_ok: bool,
 }
 
 impl Default for DashboardData {
     fn default() -> Self {
         Self {
-            total_events: 0,
-            total_apps: 0,
-            total_hours: 0.0,
-            today_events: 0,
-            most_used: String::new(),
-            top_apps: Vec::new(),
-            recent: Vec::new(),
-            config: String::new(),
-            llm_provider: "ollama".into(),
-            llm_model: "qwen2.5:0.5b".into(),
-            llm_url: "http://localhost:11434".into(),
-            api_ok: false,
+            total_events: 0, total_apps: 0, total_hours: 0.0, today_events: 0,
+            most_used: String::new(), top_apps: Vec::new(), recent: Vec::new(),
+            config: String::new(), llm_provider: "ollama".into(), llm_model: "?".into(), api_ok: false,
         }
     }
 }
 
 fn fetch_json(path: &str) -> Result<serde_json::Value> {
-    let body = ureq::get(&format!("{}{}", API_BASE, path))
-        .call()?
-        .into_body()
-        .read_to_string()?;
+    let body = ureq::get(&format!("{}{}", API_BASE, path)).call()?.into_body().read_to_string()?;
     Ok(serde_json::from_str(&body)?)
 }
 
 fn fetch_dashboard_data() -> DashboardData {
     let mut data = DashboardData::default();
-
     if let Ok(v) = fetch_json("/api/stats/overview") {
         data.total_events = v["total_events"].as_i64().unwrap_or(0);
         data.total_apps = v["total_apps"].as_i64().unwrap_or(0);
@@ -82,130 +58,119 @@ fn fetch_dashboard_data() -> DashboardData {
         data.most_used = v["most_used_app"].as_str().unwrap_or("").to_string();
         data.api_ok = true;
     }
-
     if let Ok(v) = fetch_json("/api/stats/apps") {
         if let Some(arr) = v.as_array() {
             for app in arr.iter().take(8) {
-                let name = app["app_name"].as_str().unwrap_or("?").to_string();
-                let count = app["count"].as_i64().unwrap_or(0);
-                let duration = app["duration_ms"].as_i64().unwrap_or(0);
-                data.top_apps.push((name, count, duration));
+                data.top_apps.push((
+                    app["app_name"].as_str().unwrap_or("?").to_string(),
+                    app["count"].as_i64().unwrap_or(0),
+                    app["duration_ms"].as_i64().unwrap_or(0),
+                ));
             }
         }
     }
-
     if let Ok(v) = fetch_json("/api/stats/recent") {
         if let Some(arr) = v.as_array() {
-            for ev in arr.iter().take(10) {
-                let app = ev["app_name"].as_str().unwrap_or("?").to_string();
-                let title = ev["window_title"].as_str().unwrap_or("?").to_string();
-                let st = ev["source_type"].as_str().unwrap_or("text").to_string();
+            for ev in arr.iter().take(12) {
                 let t = ev["start_time"].as_i64().unwrap_or(0);
                 let time = DateTime::from_timestamp_millis(t)
-                    .map(|dt| dt.format("%H:%M").to_string())
-                    .unwrap_or_else(|| "??:??".into());
+                    .map(|dt| dt.format("%H:%M").to_string()).unwrap_or_else(|| "??:??".into());
                 let dur_ms = ev["duration_ms"].as_i64().unwrap_or(0);
                 let dur = if dur_ms < 60_000 { format!("{}s", dur_ms / 1000) } else { format!("{}m", dur_ms / 60_000) };
-                data.recent.push((time, app, title, st, dur));
+                data.recent.push((
+                    time,
+                    ev["app_name"].as_str().unwrap_or("?").to_string(),
+                    ev["window_title"].as_str().unwrap_or("?").to_string(),
+                    ev["source_type"].as_str().unwrap_or("text").to_string(),
+                    dur,
+                ));
             }
         }
     }
-
     if let Ok(v) = fetch_json("/api/settings") {
-        data.llm_provider = v["llm"]["provider"].as_str().unwrap_or("ollama").to_string();
-        data.llm_model = v["llm"]["model"].as_str().unwrap_or("?").to_string();
-        data.llm_url = v["llm"]["base_url"].as_str().unwrap_or("?").to_string();
+        data.llm_provider = v["llm"]["active_provider"].as_str().unwrap_or("?").to_string();
+        if let Some(p) = v["llm"]["providers"][&data.llm_provider].as_object() {
+            data.llm_model = p["model"].as_str().unwrap_or("?").to_string();
+        }
         if let Ok(s) = serde_json::to_string_pretty(&v) {
             data.config = s;
         }
     }
-
     data
-}
-
-fn logo_text() -> Text<'static> {
-    let lines: Vec<Line> = LOGO.lines().map(|l| {
-        Line::from(Span::styled(l, Style::default().fg(Color::Rgb(0, 212, 170)).add_modifier(Modifier::BOLD)))
-    }).collect();
-
-    let mut text = Text::from(lines);
-    text.extend(Text::from(Line::from(vec![
-        Span::raw("  "),
-        Span::styled("Context Store", Style::default().fg(Color::Rgb(100, 100, 140))),
-        Span::styled("  │  ", Style::default().fg(Color::Rgb(60, 60, 80))),
-        Span::styled("Local-First Desktop Memory", Style::default().fg(Color::Rgb(100, 100, 140))),
-    ])));
-    text
 }
 
 pub fn run_dashboard() -> Result<()> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
-
     let mut tab = Tab::Dashboard;
 
-    let result = loop {
+    loop {
         let data = fetch_dashboard_data();
-
         terminal.draw(|f| draw(f, &tab, &data))?;
-
         if event::poll(Duration::from_secs(3))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Char('1') => tab = Tab::Dashboard,
                         KeyCode::Char('2') => tab = Tab::Settings,
-                        KeyCode::Char('r') => continue,
-                        KeyCode::Tab => {
-                            tab = match tab {
-                                Tab::Dashboard => Tab::Settings,
-                                Tab::Settings => Tab::Dashboard,
-                            };
-                        }
+                        KeyCode::Tab => tab = match tab { Tab::Dashboard => Tab::Settings, Tab::Settings => Tab::Dashboard },
                         _ => {}
                     }
                 }
             }
         }
-    };
+    }
 
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
-    result
+    Ok(())
 }
 
 fn draw(f: &mut Frame, tab: &Tab, data: &DashboardData) {
     let size = f.area();
-    let ac = Color::Rgb(0, 212, 170);
-    let dim = Color::Rgb(80, 80, 120);
-    let fg = Color::Rgb(200, 200, 220);
+    if size.width < 80 || size.height < 20 { return; }
 
-    // Logo block
-    let logo_h = LOGO.lines().count() as u16 + 1;
-    let main = Layout::default()
+    let ac = Color::Rgb(0, 212, 170);
+    let dim = Color::Rgb(90, 90, 120);
+
+    let top = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(logo_h + 2),
-            Constraint::Length(6),
-            Constraint::Min(1),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Length(5), Constraint::Min(1), Constraint::Length(3)])
         .split(size);
 
-    // Logo
-    f.render_widget(
-        Paragraph::new(logo_text())
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(ac))),
-        main[0],
-    );
+    // === TOP BAR ===
+    let logo_text = vec![
+        Line::from(Span::styled("  ▄▄▄       ██▓    ▓█████   ██▓███   ██░ ██", Style::default().fg(ac))),
+        Line::from(Span::styled("  ██▀▀█▄    ▓██▒    ▓█   ▀  ▓██░  ██▒▓██░ ██▒", Style::default().fg(ac))),
+        Line::from(Span::styled("  ██    ██  ▒██░    ▒███    ▓██░ ██▓▒▒██▀▀██░", Style::default().fg(Color::Rgb(0, 180, 150)))),
+    ];
+    let title = vec![
+        Line::from(Span::styled("Aleph Context Store", Style::default().fg(ac).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("Local-First Desktop Memory", Style::default().fg(dim))),
+    ];
+    let llm_color = if data.api_ok { ac } else { Color::Rgb(239, 68, 68) };
+    let llm_dot = if data.api_ok { "●" } else { "○" };
+    let llm_line = Line::from(vec![
+        Span::styled(format!(" {} ", llm_dot), Style::default().fg(llm_color)),
+        Span::styled(format!("{}", data.llm_provider), Style::default().fg(Color::Rgb(200, 200, 220))),
+        Span::styled(format!(" ({})", data.llm_model), Style::default().fg(dim)),
+    ]);
 
-    // Stats cards
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(35), Constraint::Min(1), Constraint::Length(24)])
+        .split(top[0]);
+    f.render_widget(Paragraph::new(logo_text), top_chunks[0]);
+    f.render_widget(Paragraph::new(title).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(ac))), top_chunks[1]);
+    f.render_widget(Paragraph::new(llm_line).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(llm_color))), top_chunks[2]);
+
+    // === STATS ROW ===
     let cards = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(20); 4])
-        .split(main[1]);
+        .constraints([Constraint::Percentage(25); 4])
+        .split(top[1]);
 
     let stats = [
         ("Total Events", &data.total_events.to_string(), Color::Rgb(0, 212, 170)),
@@ -218,102 +183,84 @@ fn draw(f: &mut Frame, tab: &Tab, data: &DashboardData) {
         let card = Paragraph::new(vec![
             Line::from(Span::styled(*label, Style::default().fg(dim))),
             Line::from(Span::styled(format!(" {}", value), Style::default().fg(*color).add_modifier(Modifier::BOLD))),
-        ])
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(*color)));
+        ]);
         f.render_widget(card, cards[i]);
     }
 
-    // Content area
+    // === CONTENT ===
     match tab {
-        Tab::Dashboard => draw_dashboard(f, main[2], data),
-        Tab::Settings => draw_settings(f, main[2], data),
+        Tab::Dashboard => draw_dashboard(f, top[2], data),
+        Tab::Settings => draw_settings(f, top[2], data),
     }
 
-    // Footer = LLM status + help
-    let llm_status = format!(" {} ({})", data.llm_provider, data.llm_model);
-    let llm_color = if data.api_ok { Color::Rgb(0, 212, 170) } else { Color::Rgb(239, 68, 68) };
-    let llm_dot = if data.api_ok { "◉" } else { "○" };
-
-    let footer_text = vec![
-        Line::from(vec![
-            Span::styled(" LLM: ", Style::default().fg(dim)),
-            Span::styled(llm_dot, Style::default().fg(llm_color)),
-            Span::styled(llm_status, Style::default().fg(fg)),
-            Span::styled("  │  ", Style::default().fg(Color::Rgb(60, 60, 80))),
-            Span::styled("[1] Dashboard  [2] Settings  [r] Refresh  [q] Quit", Style::default().fg(dim)),
-        ]),
-    ];
-    let footer = Paragraph::new(footer_text)
+    // === FOOTER ===
+    let help = format!(" [1] Dashboard  [2] Settings  [Tab] Switch  [q] Quit  ▲ {} events  refresh: 3s", data.total_events);
+    let footer = Paragraph::new(Line::from(Span::styled(help, Style::default().fg(dim))))
         .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(ac)));
-    f.render_widget(footer, main[3]);
+    f.render_widget(footer, top[3]);
 }
 
 fn draw_dashboard(f: &mut Frame, area: Rect, data: &DashboardData) {
-    let bottom = Layout::default()
+    let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
 
-    // Top apps
-    let max_app_count = data.top_apps.first().map(|(_, c, _)| *c).unwrap_or(1);
-    let app_items: Vec<ListItem> = data.top_apps.iter().map(|(name, count, dur)| {
-        let bar_len = ((*count as f64 / max_app_count as f64) * 20.0) as usize;
-        let bar = "█".repeat(bar_len);
-        let dur_str = if *dur > 0 { format!("{}h", *dur as f64 / 3_600_000.0) } else { "".to_string() };
-        ListItem::new(Line::from(vec![
-            Span::styled(format!(" {:<14}", name), Style::default().fg(Color::Rgb(200, 200, 220))),
-            Span::styled(format!("{:>4}", count), Style::default().fg(Color::Rgb(0, 212, 170)).add_modifier(Modifier::BOLD)),
-            Span::raw(" "),
-            Span::styled(bar, Style::default().fg(Color::Rgb(0, 212, 170))),
-            Span::styled(format!(" {}", dur_str), Style::default().fg(Color::Rgb(100, 100, 140))),
-        ]))
+    // Top apps as a table
+    let max_count = data.top_apps.first().map(|(_, c, _)| *c).unwrap_or(1).max(1);
+    let app_rows: Vec<Row> = data.top_apps.iter().map(|(name, count, dur)| {
+        let pct = (*count as f64 / max_count as f64) * 100.0;
+        let bar = "█".repeat((pct / 5.0) as usize);
+        let dur_str = if *dur > 0 { format!("{:.1}h", *dur as f64 / 3_600_000.0) } else { "".to_string() };
+        Row::new(vec![
+            Cell::from(Span::styled(format!(" {}", name), Style::default().fg(Color::Rgb(200, 200, 220)))),
+            Cell::from(Span::styled(format!("{}", count), Style::default().fg(Color::Rgb(0, 212, 170)).add_modifier(Modifier::BOLD))),
+            Cell::from(Span::styled(bar, Style::default().fg(Color::Rgb(0, 212, 170)))),
+            Cell::from(Span::styled(dur_str, Style::default().fg(dim(100)))),
+        ])
     }).collect();
 
-    f.render_widget(
-        List::new(app_items)
-            .block(Block::default().title(" Top Applications ").borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(168, 85, 247)))),
-        bottom[0],
-    );
+    let apps_table = Table::new(app_rows, [Constraint::Length(14), Constraint::Length(6), Constraint::Min(1), Constraint::Length(8)])
+        .header(Row::new(vec![" App", "Count", "", "Duration"].iter().map(|h| Cell::from(Span::styled(*h, Style::default().fg(dim(120)))))))
+        .block(Block::default().title(" Top Applications ").borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(168, 85, 247))));
+    f.render_widget(apps_table, chunks[0]);
 
-    // Recent events
-    let recent_items: Vec<ListItem> = data.recent.iter().map(|(time, app, title, st, dur)| {
+    // Recent events as a table
+    let recent_rows: Vec<Row> = data.recent.iter().map(|(time, app, title, st, dur)| {
         let dot = if st == "vision" { "●" } else { "○" };
         let dot_color = if st == "vision" { Color::Rgb(168, 85, 247) } else { Color::Rgb(0, 212, 170) };
-        ListItem::new(Line::from(vec![
-            Span::styled(format!(" {}", time), Style::default().fg(Color::Rgb(100, 100, 140))),
-            Span::raw(" "),
-            Span::styled(dot, Style::default().fg(dot_color)),
-            Span::raw(" "),
-            Span::styled(format!("{:<12}", app), Style::default().fg(Color::Rgb(180, 180, 200))),
-            Span::styled(format!(" {}", title), Style::default().fg(Color::Rgb(140, 140, 160))),
-            Span::styled(format!(" ({})", dur), Style::default().fg(Color::Rgb(80, 80, 120))),
-        ]))
+        Row::new(vec![
+            Cell::from(Span::styled(format!(" {}", time), Style::default().fg(dim(120)))),
+            Cell::from(Span::styled(format!(" {}", dot), Style::default().fg(dot_color))),
+            Cell::from(Span::styled(format!(" {}", app), Style::default().fg(Color::Rgb(180, 180, 200)))),
+            Cell::from(Span::styled(format!(" {}", title), Style::default().fg(Color::Rgb(140, 140, 160)))),
+            Cell::from(Span::styled(format!(" {}", dur), Style::default().fg(dim(100)))),
+        ])
     }).collect();
 
-    f.render_widget(
-        List::new(recent_items)
-            .block(Block::default().title(" Recent Activity ").borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(59, 130, 246)))),
-        bottom[1],
-    );
+    let recent_table = Table::new(recent_rows, [
+        Constraint::Length(6), Constraint::Length(2), Constraint::Length(12),
+        Constraint::Min(1), Constraint::Length(6),
+    ])
+    .header(Row::new(vec![" Time", "", "App", "Window", "Dur"].iter().map(|h| Cell::from(Span::styled(*h, Style::default().fg(dim(120)))))))
+    .block(Block::default().title(" Recent Activity ").borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(59, 130, 246))));
+    f.render_widget(recent_table, chunks[1]);
 }
 
 fn draw_settings(f: &mut Frame, area: Rect, data: &DashboardData) {
     let lines: Vec<Line> = data.config.lines().map(|l| {
-        let color = if l.contains('[') || l.contains('=') {
-            Color::Rgb(0, 212, 170)
-        } else {
-            Color::Rgb(180, 180, 200)
-        };
+        let color = if l.contains('[') || l.contains('=') { Color::Rgb(0, 212, 170) } else { Color::Rgb(180, 180, 200) };
         Line::from(Span::styled(format!(" {}", l), Style::default().fg(color)))
     }).collect();
 
-    let settings = Paragraph::new(lines)
+    let p = Paragraph::new(lines)
         .block(Block::default()
             .title(" Settings  (edit via http://localhost:2198/settings) ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(245, 158, 11))))
+            .borders(Borders::ALL).border_style(Style::default().fg(Color::Rgb(245, 158, 11))))
         .wrap(Wrap { trim: false });
-    f.render_widget(settings, area);
+    f.render_widget(p, area);
 }
+
+fn dim(v: u8) -> Color { Color::Rgb(v, v, v + 20) }
