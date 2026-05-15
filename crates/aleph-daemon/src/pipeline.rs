@@ -1,8 +1,3 @@
-//! Event processing pipeline.
-//!
-//! Receives [`WindowEvent`]s from an extractor, hashes text with xxHash3 to skip duplicates,
-//! generates embeddings, deduplicates against recent vectors, and persists to SQLite.
-
 use aleph_core::models::WindowContent;
 use aleph_core::{Database, TextEncoder, VisionEncoder};
 use anyhow::Result;
@@ -63,6 +58,24 @@ impl Pipeline {
         Ok(())
     }
 
+    fn classify(app: &str, title: &str) -> &'static str {
+        let al = app.to_lowercase();
+        let tl = title.to_lowercase();
+        if al.contains("zen") || al.contains("firefox") || al.contains("chrome") || al.contains("brave") || al.contains("edge") || al.contains("browser") || tl.contains("google search") || tl.contains("zen browser") || tl.contains("firefox") {
+            "browsing"
+        } else if al.contains("discord") || al.contains("telegram") || al.contains("whatsapp") || al.contains("slack") || al.contains("signal") {
+            "communication"
+        } else if al.contains("code") || al.contains("zed") || al.contains("vim") || al.contains("neovim") || al.contains("intellij") || al.contains("pycharm") || al.contains("rustrover") || al.contains("goland") || al.contains("cursor") || al.contains("vscodium") {
+            "coding"
+        } else if al.contains("terminal") || al.contains("gnome-terminal") || al.contains("alacritty") || al.contains("kitty") || al.contains("wezterm") || al.contains("konsole") || al.contains("tilix") {
+            "terminal"
+        } else if al.contains("spotify") || al.contains("vlc") || al.contains("mpv") || al.contains("youtube") || al.contains("netflix") {
+            "entertainment"
+        } else {
+            "other"
+        }
+    }
+
     async fn handle_text(&mut self, app: &str, title: &str, text: &str) -> Result<()> {
         let hash = xxh3_64(text.as_bytes());
 
@@ -83,16 +96,17 @@ impl Pipeline {
             return Ok(());
         }
 
+        let category = Self::classify(app, title);
         let meta_id = self
             .db
-            .insert_event(app, title, "text", Some(&format!("{:x}", hash)))
+            .insert_event(app, title, "text", Some(&format!("{:x}", hash)), Some(category))
             .await?;
 
         self.db
             .insert_vector("text_vectors", meta_id, &embedding)
             .await?;
 
-        info!("Text inserted: id={}, app={}, title={}", meta_id, app, title);
+        info!("Text inserted: id={}, app={}, title={} [{}]", meta_id, app, title, category);
         Ok(())
     }
 
@@ -113,16 +127,20 @@ impl Pipeline {
             return Ok(());
         }
 
+        let category = Self::classify(app, title);
         let meta_id = self
             .db
-            .insert_event(app, title, "vision", Some(&format!("{:x}", hash)))
+            .insert_event(app, title, "vision", Some(&format!("{:x}", hash)), Some(category))
             .await?;
+
+        // Store screenshot PNG
+        self.db.insert_screenshot(meta_id, png_bytes).await?;
 
         self.db
             .insert_vector("image_vectors", meta_id, &embedding)
             .await?;
 
-        info!("Vision inserted: id={}, app={}, title={}", meta_id, app, title);
+        info!("Vision inserted: id={}, app={}, title={} [{}]", meta_id, app, title, category);
         Ok(())
     }
 

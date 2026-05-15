@@ -61,10 +61,12 @@ impl Database {
                 start_time  INTEGER NOT NULL,
                 end_time    INTEGER,
                 content_hash TEXT,
-                source_type TEXT CHECK(source_type IN ('text', 'vision')) NOT NULL
+                source_type TEXT CHECK(source_type IN ('text', 'vision')) NOT NULL,
+                category    TEXT DEFAULT 'other'
             );
             CREATE INDEX IF NOT EXISTS idx_start_time ON context_events(start_time);
             CREATE INDEX IF NOT EXISTS idx_content_hash ON context_events(content_hash);
+            CREATE INDEX IF NOT EXISTS idx_category ON context_events(category);
 
             CREATE TABLE IF NOT EXISTS text_vectors (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +83,17 @@ impl Database {
                 timestamp   INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_image_timestamp ON image_vectors(timestamp);
+
+            CREATE TABLE IF NOT EXISTS screenshots (
+                event_id    INTEGER PRIMARY KEY,
+                png         BLOB NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_summaries (
+                date        TEXT PRIMARY KEY,
+                summary     TEXT NOT NULL,
+                generated_at INTEGER NOT NULL
+            );
             "#,
         )
         .execute(pool)
@@ -95,12 +108,14 @@ impl Database {
         window_title: &str,
         source_type: &str,
         content_hash: Option<&str>,
+        category: Option<&str>,
     ) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
+        let cat = category.unwrap_or("other");
         let result = sqlx::query(
             r#"
-            INSERT INTO context_events (app_name, window_title, start_time, end_time, content_hash, source_type)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO context_events (app_name, window_title, start_time, end_time, content_hash, source_type, category)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
         )
         .bind(app_name)
@@ -109,6 +124,7 @@ impl Database {
         .bind(now)
         .bind(content_hash)
         .bind(source_type)
+        .bind(cat)
         .execute(&self.sqlite)
         .await?;
 
@@ -357,6 +373,50 @@ impl Database {
             let duration_ms = r.end_time.unwrap_or(r.start_time) - r.start_time;
             RecentEvent { id: r.id, app_name: r.app_name, window_title: r.window_title, start_time: r.start_time, end_time: r.end_time, duration_ms, source_type: r.source_type }
         }).collect())
+    }
+
+    /// Store a screenshot PNG for an event.
+    pub async fn insert_screenshot(&self, event_id: i64, png: &[u8]) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO screenshots (event_id, png) VALUES (?1, ?2)",
+        )
+        .bind(event_id)
+        .bind(png)
+        .execute(&self.sqlite)
+        .await?;
+        Ok(())
+    }
+
+    /// Retrieve a screenshot PNG for an event.
+    pub async fn get_screenshot(&self, event_id: i64) -> Result<Option<Vec<u8>>> {
+        let row = sqlx::query("SELECT png FROM screenshots WHERE event_id = ?1")
+            .bind(event_id)
+            .fetch_optional(&self.sqlite)
+            .await?;
+        Ok(row.map(|r| r.get("png")))
+    }
+
+    /// Store a daily summary.
+    pub async fn insert_daily_summary(&self, date: &str, summary: &str) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT OR REPLACE INTO daily_summaries (date, summary, generated_at) VALUES (?1, ?2, ?3)",
+        )
+        .bind(date)
+        .bind(summary)
+        .bind(now)
+        .execute(&self.sqlite)
+        .await?;
+        Ok(())
+    }
+
+    /// Get a daily summary by date.
+    pub async fn get_daily_summary(&self, date: &str) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT summary FROM daily_summaries WHERE date = ?1")
+            .bind(date)
+            .fetch_optional(&self.sqlite)
+            .await?;
+        Ok(row.map(|r| r.get("summary")))
     }
 
     /// Keyword search over window titles and app names (case-insensitive).

@@ -9,7 +9,7 @@ use axum::{
 };
 use std::borrow::Cow;
 use aleph_core::{
-    models::{QueryRequest, QueryResponse, OverviewStats, HourlyStat, DailyStat, AppStat, WindowStat, RecentEvent, AskRequest, AskResponse, SourceMetadata},
+    models::{QueryRequest, QueryResponse, OverviewStats, HourlyStat, DailyStat, AppStat, WindowStat, RecentEvent, AskRequest, AskResponse, CaptureStatus, DailySummaryResponse, SourceMetadata},
     Config, Database, TextEncoder,
 };
 use std::net::SocketAddr;
@@ -61,6 +61,10 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
         .route("/api/stats/recent", get(stats_recent))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/ask", post(ask_handler))
+        .route("/api/capture/status", get(capture_status_handler).put(put_capture_handler))
+        .route("/api/screenshots/{id}", get(screenshot_handler))
+        .route("/api/daily-summary/{date}", get(daily_summary_handler))
+        .route("/api/daily-summary/today", get(today_summary_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -175,6 +179,120 @@ async fn ask_handler(
     }).collect();
 
     Ok(Json(AskResponse { answer, sources }))
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot handler
+// ---------------------------------------------------------------------------
+
+async fn screenshot_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<(axum::http::StatusCode, [(axum::http::HeaderName, String); 1], Vec<u8>), StatusCode> {
+    use axum::http::header;
+    match state.db.get_screenshot(id).await {
+        Ok(Some(png)) => Ok((StatusCode::OK, [(header::CONTENT_TYPE, "image/png".into())], png)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(e) => {
+            error!("Screenshot fetch error: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Capture status & pause/resume
+// ---------------------------------------------------------------------------
+
+async fn capture_status_handler() -> Json<CaptureStatus> {
+    Json(CaptureStatus { enabled: Config::global().capture.enabled })
+}
+
+async fn put_capture_handler(Json(body): Json<CaptureStatus>) -> Result<Json<CaptureStatus>, StatusCode> {
+    let mut cfg = Config::global().clone();
+    cfg.capture.enabled = body.enabled;
+    cfg.save().map_err(|e| {
+        error!("Failed to save capture config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let _ = aleph_core::Config::init_global();
+    Ok(Json(CaptureStatus { enabled: cfg.capture.enabled }))
+}
+
+// ---------------------------------------------------------------------------
+// Daily summary
+// ---------------------------------------------------------------------------
+
+async fn today_summary_handler(State(state): State<Arc<AppState>>) -> Result<Json<DailySummaryResponse>, StatusCode> {
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    daily_summary_for_date(&state.db, &today).await
+}
+
+async fn daily_summary_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(date): axum::extract::Path<String>,
+) -> Result<Json<DailySummaryResponse>, StatusCode> {
+    daily_summary_for_date(&state.db, &date).await
+}
+
+async fn daily_summary_for_date(db: &Database, date: &str) -> Result<Json<DailySummaryResponse>, StatusCode> {
+    // Check if we already have a cached summary
+    if let Ok(Some(existing)) = db.get_daily_summary(date).await {
+        return Ok(Json(DailySummaryResponse { date: date.to_string(), summary: existing }));
+    }
+
+    // Fetch events for that date
+    let yesterday_start = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis())
+        .unwrap_or(0);
+    let yesterday_end = yesterday_start + 86_400_000;
+
+    // Get events in range
+    let events = db.get_recent_events(500).await.map_err(|e| {
+        error!("Failed to fetch events for summary: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let day_events: Vec<_> = events.into_iter().filter(|e| {
+        e.start_time >= yesterday_start && e.start_time < yesterday_end
+    }).collect();
+
+    if day_events.is_empty() {
+        return Ok(Json(DailySummaryResponse {
+            date: date.to_string(),
+            summary: "No activity recorded on this day.".into(),
+        }));
+    }
+
+    // Format for LLM
+    let mut lines = Vec::new();
+    for ev in &day_events {
+        let t = chrono::DateTime::from_timestamp_millis(ev.start_time)
+            .map(|dt| dt.format("%H:%M").to_string()).unwrap_or_default();
+        lines.push(format!("- {} | {} — {} ({}s)", t, ev.app_name, ev.window_title, ev.duration_ms / 1000));
+    }
+    let context = lines.join("\n");
+
+    let prompt = format!(
+        "Summarize this user's day based on their desktop activity log. \
+         Include: total sessions, most used apps, peak hours, notable patterns. \
+         Be concise but specific.\n\n{}",
+        context
+    );
+
+    let summary = match aleph_core::llm::ask_llm(Config::global(),
+        "You are a daily activity summarizer. Return only the summary, no preamble.", &prompt)
+    {
+        Ok(s) => s,
+        Err(e) => format!("LLM unavailable ({}). Raw activity:\n{}", e, context),
+    };
+
+    // Cache it
+    if let Err(e) = db.insert_daily_summary(date, &summary).await {
+        error!("Failed to cache daily summary: {}", e);
+    }
+
+    Ok(Json(DailySummaryResponse { date: date.to_string(), summary }))
 }
 
 const DASHBOARD_HTML: &str = include_str!("../../../dashboard/index.html");

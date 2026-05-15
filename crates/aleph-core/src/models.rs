@@ -88,6 +88,23 @@ pub struct AskResponse {
     pub sources: Vec<SourceMetadata>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureStatus {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenshotResponse {
+    pub id: i64,
+    pub png_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailySummaryResponse {
+    pub date: String,
+    pub summary: String,
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard / Stats models
 // ---------------------------------------------------------------------------

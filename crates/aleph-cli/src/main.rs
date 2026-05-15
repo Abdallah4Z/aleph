@@ -28,6 +28,10 @@ enum Commands {
     Doctor,
     /// Open terminal dashboard (TUI)
     Dashboard,
+    /// Pause capture (stop recording)
+    Pause,
+    /// Resume capture
+    Resume,
     /// Manage configuration
     Config {
         #[command(subcommand)]
@@ -67,6 +71,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Dashboard => {
             tui::run_dashboard()?;
             Ok(())
+        }
+        Commands::Pause => {
+            set_capture(false).await
+        }
+        Commands::Resume => {
+            set_capture(true).await
         }
         Commands::Config { action } => match action {
             ConfigCommands::Init => config_init(),
@@ -182,6 +192,22 @@ async fn logs() -> anyhow::Result<()> {
         Ok(_) => {}
         Err(_) => eprintln!("Could not fetch logs (journalctl not available)."),
     }
+    Ok(())
+}
+
+async fn set_capture(enabled: bool) -> anyhow::Result<()> {
+    let config = aleph_core::Config::load()?;
+    let mut cfg = config.clone();
+    cfg.capture.enabled = enabled;
+    cfg.save()?;
+    let label = if enabled { "resumed" } else { "paused" };
+    println!("Capture {}", label);
+    // Also try to update a running Aleph via API
+    let port = config.general.port;
+    let body = serde_json::json!({"capture": {"enabled": enabled}});
+    let _ = ureq::put(&format!("http://127.0.0.1:{}/api/capture/status", port))
+        .header("Content-Type", "application/json")
+        .send_json(&body);
     Ok(())
 }
 
@@ -324,6 +350,7 @@ fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
         "general.port" => cfg.general.port = value.parse()?,
         "general.log_level" => cfg.general.log_level = value.to_string(),
         "general.data_dir" => cfg.general.data_dir = value.to_string(),
+        "capture.enabled" => cfg.capture.enabled = value.parse()?,
         "polling.interval_secs" => cfg.polling.interval_secs = value.parse()?,
         "dedup.threshold" => cfg.dedup.threshold = value.parse()?,
         "dedup.last_n" => cfg.dedup.last_n = value.parse()?,

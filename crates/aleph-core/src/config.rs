@@ -9,6 +9,7 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 #[serde(default)]
 pub struct Config {
     pub general: GeneralConfig,
+    pub capture: CaptureConfig,
     pub polling: PollingConfig,
     pub dedup: DedupConfig,
     pub encoders: EncodersConfig,
@@ -22,6 +23,11 @@ pub struct GeneralConfig {
     pub data_dir: String,
     pub port: u16,
     pub log_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureConfig {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +125,7 @@ impl Default for Config {
                 port: 2198,
                 log_level: "info".into(),
             },
+            capture: CaptureConfig { enabled: true },
             polling: PollingConfig { interval_secs: 2 },
             dedup: DedupConfig {
                 threshold: 0.95,
@@ -249,6 +256,9 @@ impl Config {
         }
         if other.general.log_level != Config::default().general.log_level {
             self.general.log_level = other.general.log_level;
+        }
+        if other.capture.enabled != Config::default().capture.enabled {
+            self.capture.enabled = other.capture.enabled;
         }
         if other.polling.interval_secs != Config::default().polling.interval_secs {
             self.polling.interval_secs = other.polling.interval_secs;
