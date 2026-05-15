@@ -193,11 +193,15 @@ async fn ask_handler(
 async fn screenshot_handler(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<i64>,
-) -> Result<(axum::http::StatusCode, [(axum::http::HeaderName, String); 1], Vec<u8>), StatusCode> {
+) -> Result<(axum::http::StatusCode, [(axum::http::HeaderName, Vec<u8>); 1], Vec<u8>), StatusCode> {
     use axum::http::header;
     match state.db.get_screenshot(id).await {
-        Ok(Some(png)) => Ok((StatusCode::OK, [(header::CONTENT_TYPE, "image/png".into())], png)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Ok(Some(png)) => Ok((StatusCode::OK, [(header::CONTENT_TYPE, b"image/png".to_vec())], png)),
+        Ok(None) => {
+            // Return 1x1 transparent pixel instead of 404 to avoid console errors
+            let pixel: &[u8] = &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 0, 73, 68, 65, 84, 8, 215, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1, 106, 175, 207, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
+            Ok((StatusCode::OK, [(header::CONTENT_TYPE, b"image/png".to_vec())], pixel.to_vec()))
+        }
         Err(e) => {
             error!("Screenshot fetch error: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

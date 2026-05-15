@@ -368,13 +368,13 @@ async function loadRecent() {
               <div class="flex items-center gap-2 text-xs text-gray-600 mt-1">
                 <span>${date} ${time}</span>
                 <span class="text-accent font-medium">${dur}</span>
-                <span class="text-purple cursor-pointer hover:text-accent" onclick="showScreenshot(${e.id})">📷</span>
+                ${e.source_type === 'vision' ? `<span class="text-purple cursor-pointer hover:text-accent" onclick="showScreenshot(${e.id})">📷</span>` : ''}
               </div>
             </div>
           </div>
-          <div class="shrink-0 cursor-pointer" onclick="showScreenshot(${e.id})">
+          ${e.source_type === 'vision' ? `<div class="shrink-0 cursor-pointer" onclick="showScreenshot(${e.id})">
             <img src="/api/screenshots/${e.id}" class="w-16 h-12 rounded object-cover border border-border hover:border-accent transition-colors" loading="lazy" onerror="this.style.display='none'">
-          </div>
+          </div>` : ''}
         </div>
       </div>`;
     }).join('');
