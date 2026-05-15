@@ -65,6 +65,60 @@ async function loadSettings() {
 
 function renderForm(cfg) {
   const form = document.getElementById('settingsForm');
+  const providers = [
+    {id:'ollama', label:'Ollama (Local)', defaultKey:'...'},
+    {id:'ollama_cloud', label:'Ollama Cloud', defaultKey:'...'},
+    {id:'openai', label:'OpenAI', defaultKey:'sk-...'},
+    {id:'openrouter', label:'OpenRouter', defaultKey:'sk-or-...'},
+    {id:'groq', label:'Groq', defaultKey:'gsk_...'},
+  ];
+  const providerUrls = {
+    ollama: 'http://localhost:11434',
+    ollama_cloud: 'https://api.ollama.cloud',
+    openai: 'https://api.openai.com',
+    openrouter: 'https://openrouter.ai/api',
+    groq: 'https://api.groq.com/openai',
+  };
+  const active = cfg.llm.active_provider || 'groq';
+
+  let llmSection = `
+    <div class="section">
+      <div class="section-title">LLM Provider
+        <span style="float:right;font-size:0.7rem;color:#555570">Active: <strong style="color:#00d4aa">${active}</strong></span>
+      </div>
+      <div class="field">
+        <div><div class="field-label">Active Provider</div><div class="field-desc">Which provider to use for queries</div></div>
+        <select class="field-input" id="active_provider" style="text-align:left;width:180px">
+          ${providers.map(p => `<option value="${p.id}" ${active===p.id?'selected':''}>${p.label}</option>`).join('')}
+        </select>
+      </div>
+    </div>`;
+
+  providers.forEach(p => {
+    const pc = cfg.llm.providers[p.id] || {enabled:false, model:'', api_key:'', base_url:''};
+    const keyId = `key_${p.id}`;
+    const eyeId = `eye_${p.id}`;
+    llmSection += `
+    <div class="section" style="border-color:${active===p.id?'#00d4aa55':'#252540'}">
+      <div class="section-title" style="display:flex;align-items:center;gap:8px">
+        <label class="toggle" style="margin:0"><input type="checkbox" id="en_${p.id}" ${pc.enabled?'checked':''}><div class="toggle-slider"></div></label>
+        ${p.label}
+        ${active===p.id?'<span style="font-size:0.6rem;background:#00d4aa22;color:#00d4aa;padding:2px 8px;border-radius:4px">ACTIVE</span>':''}
+      </div>
+      <div class="field"><div><div class="field-label">Model</div></div><input class="field-input" type="text" id="model_${p.id}" value="${pc.model}" style="text-align:left;width:200px">
+        <button class="fetch-btn" onclick="fetchModels('${p.id}')" title="Fetch models from provider">⟳</button>
+      </div>
+      <div class="field"><div><div class="field-label">Base URL</div></div><input class="field-input" type="text" id="url_${p.id}" value="${pc.base_url || providerUrls[p.id] || ''}" style="text-align:left;width:280px"></div>
+      <div class="field">
+        <div><div class="field-label">API Key</div></div>
+        <div style="display:flex;gap:4px;align-items:center">
+          <input class="field-input" type="password" id="${keyId}" value="${pc.api_key}" style="text-align:left;width:280px">
+          <button class="eye-btn" onclick="toggleKey('${keyId}','${eyeId}')" id="${eyeId}" title="Show/Hide">👁</button>
+        </div>
+      </div>
+    </div>`;
+  });
+
   form.innerHTML = `
     <div class="section">
       <div class="section-title">General</div>
@@ -89,43 +143,78 @@ function renderForm(cfg) {
       <div class="section-title">Retention</div>
       <div class="field"><div><div class="field-label">Max Events</div><div class="field-desc">Auto-prune oldest events when exceeded</div></div><input class="field-input" type="number" id="max_events" value="${cfg.retention.max_events}" min="0"></div>
     </div>
-    <div class="section">
-      <div class="section-title">LLM Provider</div>
-      <div class="field"><div><div class="field-label">Provider</div><div class="field-desc">ollama, openai, openrouter, groq</div></div>
-        <select class="field-input" id="llm_provider" style="text-align:left;width:140px" onchange="updateLlmUrl()">
-          <option value="ollama" ${cfg.llm.provider==='ollama'?'selected':''}>Ollama</option>
-          <option value="openai" ${cfg.llm.provider==='openai'?'selected':''}>OpenAI</option>
-          <option value="openrouter" ${cfg.llm.provider==='openrouter'?'selected':''}>OpenRouter</option>
-          <option value="groq" ${cfg.llm.provider==='groq'?'selected':''}>Groq</option>
-        </select>
-      </div>
-      <div class="field"><div><div class="field-label">Model</div><div class="field-desc">e.g. qwen2.5:0.5b, gpt-4o-mini</div></div><input class="field-input" type="text" id="llm_model" value="${cfg.llm.model}" style="text-align:left;width:200px"></div>
-      <div class="field"><div><div class="field-label">Base URL</div><div class="field-desc">API endpoint</div></div><input class="field-input" type="text" id="llm_url" value="${cfg.llm.base_url}" style="text-align:left;width:280px"></div>
-      <div class="field"><div><div class="field-label">API Key</div><div class="field-desc">Leave blank if not required</div></div><input class="field-input" type="password" id="llm_key" value="${cfg.llm.api_key}" style="text-align:left;width:280px"></div>
-    </div>
+    ${llmSection}
   `;
-  // also set the onchange for provider dropdown
-  window.updateLlmUrl = function() {
-    const p = document.getElementById('llm_provider').value;
-    const urlField = document.getElementById('llm_url');
-    const defaults = {
-      ollama: 'http://localhost:11434',
-      openai: 'https://api.openai.com',
-      openrouter: 'https://openrouter.ai/api',
-      groq: 'https://api.groq.com/openai',
-    };
-    if (urlField && defaults[p] && !urlField.dataset.userEdited) {
-      urlField.value = defaults[p];
+}
+
+window.toggleKey = function(id) {
+  const inp = document.getElementById(id);
+  if (!inp) return;
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+};
+
+window.fetchModels = async function(provider) {
+  const btn = event.target;
+  btn.textContent = '⏳';
+  const url = document.getElementById(`url_${provider}`).value;
+  const key = document.getElementById(`key_${provider}`).value;
+  const select = document.getElementById(`model_${provider}`);
+  let models = [];
+
+  try {
+    if (provider === 'ollama') {
+      const res = await fetch(url + '/api/tags');
+      const data = await res.json();
+      models = (data.models || []).map(m => m.name);
+    } else if (provider === 'ollama_cloud') {
+      const res = await fetch(url + '/api/tags', {headers: {Authorization: 'Bearer ' + key}});
+      const data = await res.json();
+      models = (data.models || []).map(m => m.name);
+    } else if (provider === 'groq') {
+      const res = await fetch(url + '/v1/models', {headers: {Authorization: 'Bearer ' + key}});
+      const data = await res.json();
+      models = (data.data || []).map(m => m.id);
+    } else if (provider === 'openai') {
+      const res = await fetch(url + '/v1/models', {headers: {Authorization: 'Bearer ' + key}});
+      const data = await res.json();
+      models = (data.data || []).map(m => m.id);
+    } else if (provider === 'openrouter') {
+      const res = await fetch(url + '/v1/models', {headers: {Authorization: 'Bearer ' + key}});
+      const data = await res.json();
+      models = (data.data || []).map(m => m.id);
     }
-  };
-  document.getElementById('llm_url')?.addEventListener('input', function() {
-    this.dataset.userEdited = 'true';
-  });
+  } catch(e) {
+    models = ['Error: ' + e.message];
+  }
+
+  if (models.length > 0) {
+    select.placeholder = models[0];
+    select.value = '';
+    const datalist = document.createElement('datalist');
+    datalist.id = `dl_${provider}`;
+    models.forEach(m => { const o = document.createElement('option'); o.value = m; datalist.appendChild(o); });
+    const old = document.getElementById(`dl_${provider}`);
+    if (old) old.remove();
+    document.body.appendChild(datalist);
+    select.setAttribute('list', `dl_${provider}`);
+  }
+  btn.textContent = '⟳';
+};
 }
 
 async function saveSettings() {
   const btn = document.getElementById('saveBtn');
   btn.disabled = true; btn.textContent = 'Saving...';
+  const providerIds = ['ollama','ollama_cloud','openai','openrouter','groq'];
+  const providers = {};
+  providerIds.forEach(id => {
+    providers[id] = {
+      enabled: document.getElementById(`en_${id}`).checked,
+      model: document.getElementById(`model_${id}`).value,
+      api_key: document.getElementById(`key_${id}`).value,
+      base_url: document.getElementById(`url_${id}`).value,
+    };
+  });
   const body = {
     general: {
       port: parseInt(document.getElementById('port').value) || 2198,
@@ -146,10 +235,8 @@ async function saveSettings() {
       max_events: parseInt(document.getElementById('max_events').value) || 10000,
     },
     llm: {
-      provider: document.getElementById('llm_provider').value || 'ollama',
-      model: document.getElementById('llm_model').value || 'qwen2.5:0.5b',
-      base_url: document.getElementById('llm_url').value || 'http://localhost:11434',
-      api_key: document.getElementById('llm_key').value || '',
+      active_provider: document.getElementById('active_provider').value || 'groq',
+      providers,
     },
   };
   try {

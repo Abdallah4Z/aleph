@@ -167,6 +167,39 @@ max_events = 10000
 
 [dashboard]
 theme = "dark"
+
+[llm]
+active_provider = "groq"
+
+[llm.providers.ollama]
+enabled = true
+model = "qwen2.5:0.5b"
+api_key = ""
+base_url = "http://localhost:11434"
+
+[llm.providers.ollama_cloud]
+enabled = false
+model = "qwen2.5"
+api_key = ""
+base_url = "https://api.ollama.cloud"
+
+[llm.providers.openai]
+enabled = false
+model = "gpt-4o-mini"
+api_key = ""
+base_url = "https://api.openai.com"
+
+[llm.providers.openrouter]
+enabled = false
+model = "anthropic/claude-3-haiku"
+api_key = ""
+base_url = "https://openrouter.ai/api"
+
+[llm.providers.groq]
+enabled = true
+model = "llama-3.1-8b-instant"
+api_key = ""
+base_url = "https://api.groq.com/openai"
 CONF
 log "Config written to ${CONFIG_DIR}/config.toml"
 echo ""

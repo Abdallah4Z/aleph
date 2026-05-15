@@ -15,12 +15,11 @@ use aleph_core::{
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, error};
 
 struct AppState {
     db: Database,
-    text_encoder: Box<dyn TextEncoder + Send + Sync>,
+    text_encoder: Arc<dyn TextEncoder + Send + Sync>,
 }
 
 /// Start the Axum HTTP server on `127.0.0.1:{port}`.
@@ -32,22 +31,22 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
     let db = Database::open(&data_dir).await?;
 
     eprintln!("aleph: api: loading text encoder...");
-    let text_encoder: Box<dyn TextEncoder + Send + Sync> = {
+    let text_encoder: Arc<dyn TextEncoder + Send + Sync> = {
         let cache = data_dir.join("models").join("all-MiniLM-L6-v2");
         if cache.exists() {
             match aleph_core::embedding::MiniLmEncoder::from_dir(&cache) {
-                Ok(enc) => Box::new(enc),
+                Ok(enc) => Arc::new(enc),
                 Err(e) => {
                     error!("Failed to load MiniLM: {}", e);
-                    Box::new(HashEncoder)
+                    Arc::new(HashEncoder)
                 }
             }
         } else {
-            Box::new(HashEncoder)
+            Arc::new(HashEncoder)
         }
     };
 
-    let state = Arc::new(Mutex::new(AppState { db, text_encoder }));
+    let state = Arc::new(AppState { db, text_encoder });
 
     let app = Router::new()
         .route("/", get(dashboard_handler))
@@ -79,19 +78,25 @@ pub async fn run_api(port: u16, data_dir: PathBuf) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn query_handler(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<AppState>>,
     Json(req): Json<QueryRequest>,
 ) -> Result<Json<QueryResponse>, StatusCode> {
-    let state = state.lock().await;
-    let text_vec = state.text_encoder.encode(&req.question).map_err(|e| {
+    let question = req.question.clone();
+    let top_k = req.top_k;
+
+    let text_vec = state.text_encoder.encode(&question).map_err(|e| {
         error!("Encoding failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
     let image_vec = text_vec.clone();
-    let response = state.db.query(req, &text_vec, &image_vec).await.map_err(|e| {
+
+    let query_req = QueryRequest { question, top_k };
+    let response = state.db.query(query_req, &text_vec, &image_vec).await.map_err(|e| {
         error!("DB query failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
     Ok(Json(response))
 }
 
@@ -144,19 +149,36 @@ async fn put_settings(Json(updates): Json<serde_json::Value>) -> Result<Json<ale
         cfg.general.log_level = level.to_string();
     }
     if let Some(llm) = updates.get("llm") {
-        if let Some(provider) = llm.get("provider").and_then(|v| v.as_str()) {
-            cfg.llm.provider = provider.to_string();
+        if let Some(active) = llm.get("active_provider").and_then(|v| v.as_str()) {
+            cfg.llm.active_provider = active.to_string();
         }
-        if let Some(model) = llm.get("model").and_then(|v| v.as_str()) {
-            cfg.llm.model = model.to_string();
-        }
-        if let Some(key) = llm.get("api_key").and_then(|v| v.as_str()) {
-            if !key.is_empty() {
-                cfg.llm.api_key = key.to_string();
+        if let Some(providers) = llm.get("providers").and_then(|v| v.as_object()) {
+            for (name, p) in providers {
+                let pc = match name.as_str() {
+                    "ollama" => &mut cfg.llm.providers.ollama,
+                    "ollama_cloud" => &mut cfg.llm.providers.ollama_cloud,
+                    "openai" => &mut cfg.llm.providers.openai,
+                    "openrouter" => &mut cfg.llm.providers.openrouter,
+                    "groq" => &mut cfg.llm.providers.groq,
+                    _ => continue,
+                };
+                if let Some(enabled) = p.get("enabled").and_then(|v| v.as_bool()) {
+                    pc.enabled = enabled;
+                }
+                if let Some(model) = p.get("model").and_then(|v| v.as_str()) {
+                    if !model.is_empty() {
+                        pc.model = model.to_string();
+                    }
+                }
+                if let Some(key) = p.get("api_key").and_then(|v| v.as_str()) {
+                    pc.api_key = key.to_string();
+                }
+                if let Some(url) = p.get("base_url").and_then(|v| v.as_str()) {
+                    if !url.is_empty() {
+                        pc.base_url = url.to_string();
+                    }
+                }
             }
-        }
-        if let Some(url) = llm.get("base_url").and_then(|v| v.as_str()) {
-            cfg.llm.base_url = url.to_string();
         }
     }
 
@@ -176,9 +198,8 @@ async fn put_settings(Json(updates): Json<serde_json::Value>) -> Result<Json<ale
 // ---------------------------------------------------------------------------
 
 async fn stats_overview(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<OverviewStats>, StatusCode> {
-    let state = state.lock().await;
     state.db.get_overview().await.map_err(|e| {
         error!("Overview failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -186,9 +207,8 @@ async fn stats_overview(
 }
 
 async fn stats_hourly(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<HourlyStat>>, StatusCode> {
-    let state = state.lock().await;
     state.db.get_hourly_stats().await.map_err(|e| {
         error!("Hourly failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -196,9 +216,8 @@ async fn stats_hourly(
 }
 
 async fn stats_daily(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<DailyStat>>, StatusCode> {
-    let state = state.lock().await;
     state.db.get_daily_stats().await.map_err(|e| {
         error!("Daily failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -206,9 +225,8 @@ async fn stats_daily(
 }
 
 async fn stats_apps(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<AppStat>>, StatusCode> {
-    let state = state.lock().await;
     state.db.get_app_stats().await.map_err(|e| {
         error!("Apps failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -216,9 +234,8 @@ async fn stats_apps(
 }
 
 async fn stats_windows(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<WindowStat>>, StatusCode> {
-    let state = state.lock().await;
     state.db.get_window_stats(20).await.map_err(|e| {
         error!("Windows failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -226,9 +243,8 @@ async fn stats_windows(
 }
 
 async fn stats_recent(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<RecentEvent>>, StatusCode> {
-    let state = state.lock().await;
     state.db.get_recent_events(50).await.map_err(|e| {
         error!("Recent failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR

@@ -3,8 +3,11 @@
 /// Compute the cosine similarity between two equal-length vectors.
 ///
 /// Returns a value in `[-1.0, 1.0]` (or `[0.0, 1.0]` for L2-normalized vectors).
+/// Returns 0.0 if vectors have different dimensions (mismatch guard).
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "vectors must have same dimension");
+    if a.len() != b.len() {
+        return 0.0;
+    }
     let mut dot = 0.0f32;
     let mut na = 0.0f32;
     let mut nb = 0.0f32;

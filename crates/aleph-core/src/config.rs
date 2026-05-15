@@ -52,11 +52,59 @@ pub struct DashboardConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LlmConfig {
-    pub provider: String,
+    pub active_provider: String,
+    pub providers: LlmProviders,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LlmProviders {
+    pub ollama: ProviderConfig,
+    pub ollama_cloud: ProviderConfig,
+    pub openai: ProviderConfig,
+    pub openrouter: ProviderConfig,
+    pub groq: ProviderConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProviderConfig {
+    pub enabled: bool,
     pub model: String,
     pub api_key: String,
     pub base_url: String,
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: String::new(),
+            api_key: String::new(),
+            base_url: String::new(),
+        }
+    }
+}
+
+impl Default for LlmProviders {
+    fn default() -> Self {
+        let def = Config::default().llm.providers;
+        Self {
+            ollama: def.ollama,
+            ollama_cloud: def.ollama_cloud,
+            openai: def.openai,
+            openrouter: def.openrouter,
+            groq: def.groq,
+        }
+    }
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Config::default().llm
+    }
 }
 
 impl Default for Config {
@@ -85,10 +133,39 @@ impl Default for Config {
                 theme: "dark".into(),
             },
             llm: LlmConfig {
-                provider: "ollama".into(),
-                model: "qwen2.5:0.5b".into(),
-                api_key: String::new(),
-                base_url: "http://localhost:11434".into(),
+                active_provider: "groq".into(),
+                providers: LlmProviders {
+                    ollama: ProviderConfig {
+                        enabled: true,
+                        model: "qwen2.5:0.5b".into(),
+                        api_key: String::new(),
+                        base_url: "http://localhost:11434".into(),
+                    },
+                    ollama_cloud: ProviderConfig {
+                        enabled: false,
+                        model: "qwen2.5".into(),
+                        api_key: String::new(),
+                        base_url: "https://api.ollama.cloud".into(),
+                    },
+                    openai: ProviderConfig {
+                        enabled: false,
+                        model: "gpt-4o-mini".into(),
+                        api_key: String::new(),
+                        base_url: "https://api.openai.com".into(),
+                    },
+                    openrouter: ProviderConfig {
+                        enabled: false,
+                        model: "anthropic/claude-3-haiku".into(),
+                        api_key: String::new(),
+                        base_url: "https://openrouter.ai/api".into(),
+                    },
+                    groq: ProviderConfig {
+                        enabled: true,
+                        model: "llama-3.1-8b-instant".into(),
+                        api_key: String::new(),
+                        base_url: "https://api.groq.com/openai".into(),
+                    },
+                },
             },
         }
     }
@@ -190,18 +267,22 @@ impl Config {
         if other.dashboard.theme != Config::default().dashboard.theme {
             self.dashboard.theme = other.dashboard.theme;
         }
-        if other.llm.provider != Config::default().llm.provider {
-            self.llm.provider = other.llm.provider;
+        if other.llm.active_provider != Config::default().llm.active_provider {
+            self.llm.active_provider = other.llm.active_provider;
         }
-        if other.llm.model != Config::default().llm.model {
-            self.llm.model = other.llm.model;
-        }
-        if !other.llm.api_key.is_empty() {
-            self.llm.api_key = other.llm.api_key;
-        }
-        if other.llm.base_url != Config::default().llm.base_url {
-            self.llm.base_url = other.llm.base_url;
-        }
+        // Merge provider configs
+        let def = Config::default().llm.providers.ollama;
+        let m = |c: &mut ProviderConfig, o: &ProviderConfig| {
+            c.enabled = o.enabled;
+            if o.model != def.model { c.model = o.model.clone(); }
+            if !o.api_key.is_empty() { c.api_key = o.api_key.clone(); }
+            if o.base_url != def.base_url { c.base_url = o.base_url.clone(); }
+        };
+        m(&mut self.llm.providers.ollama, &other.llm.providers.ollama);
+        m(&mut self.llm.providers.ollama_cloud, &other.llm.providers.ollama_cloud);
+        m(&mut self.llm.providers.openai, &other.llm.providers.openai);
+        m(&mut self.llm.providers.openrouter, &other.llm.providers.openrouter);
+        m(&mut self.llm.providers.groq, &other.llm.providers.groq);
     }
 
     fn apply_env_overrides(&mut self) {
