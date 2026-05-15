@@ -4,12 +4,12 @@ use clap::{Parser, Subcommand};
 #[command(name = "aleph", about = "Aleph — Context Store for your desktop", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start daemon + API server
+    /// Start daemon + API server (default)
     Start,
     /// Start just the background daemon
     Daemon,
@@ -47,7 +47,7 @@ enum ConfigCommands {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
+    match cli.command.unwrap_or(Commands::Start) {
         Commands::Start => start_both().await,
         Commands::Daemon => start_daemon().await,
         Commands::Api => start_api().await,
@@ -89,9 +89,13 @@ async fn start_both() -> anyhow::Result<()> {
         }
     });
 
-    tokio::select! {
-        _ = daemon_handle => {},
-        _ = api_handle => {},
+    let (daemon_res, api_res) = tokio::join!(daemon_handle, api_handle);
+
+    if let Err(e) = daemon_res {
+        eprintln!("Daemon task panicked: {}", e);
+    }
+    if let Err(e) = api_res {
+        eprintln!("API task panicked: {}", e);
     }
 
     Ok(())

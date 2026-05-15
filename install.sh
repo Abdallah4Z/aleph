@@ -182,7 +182,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=${BIN_DIR}/aleph
+ExecStart=${BIN_DIR}/aleph start
 Restart=on-failure
 RestartSec=3
 Environment=DISPLAY=${DISPLAY_VAL}
