@@ -1,22 +1,47 @@
 #!/usr/bin/env python3
-"""Aleph Voice Assistant — wake word + query loop.
- 
-Continuously listens for "okay aleph" or "aleph" wake word,
-then records your query, sends to Aleph API, and speaks the answer.
+"""Aleph Voice Assistant — wake word + query loop with desktop popups.
 
-Usage:
-  python3 aleph-voice.py              # wake word mode (background service)
-  python3 aleph-voice.py --once       # single query (for aleph listen command)
-  python3 aleph-voice.py --text "..." # process text directly
+Wake words: "jarvis", "hey jarvis", "hi jarvis", "aleph", "okay aleph", "hey aleph"
+Sends desktop notifications that stay until the query completes.
+Plays a chime on activation. Speaks the response via espeak-ng.
 """
 import sys, os, json, time, struct, argparse, subprocess, threading, shutil, re
 import numpy as np
 
 SAMPLE_RATE = 16000
-WAKE_WORDS = ["aleph", "okay aleph", "hey aleph", "aleph "]
+WAKE_WORDS = ["jarvis", "hey jarvis", "hi jarvis", "aleph", "okay aleph", "hey aleph"]
 API_BASE = "http://127.0.0.1:2198"
-MODELS_DIR = os.path.expanduser("~/.local/share/aleph/models")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ============================================================
+# Desktop notification
+# ============================================================
+
+NOTIF_ID = 9999
+
+def notif(msg, urgency="normal", expire=0):
+    """Send a desktop notification that persists (expire=0 = until dismissed)."""
+    urgency_map = {"low": "low", "normal": "normal", "critical": "critical"}
+    try:
+        subprocess.run([
+            "notify-send",
+            "-u", urgency_map.get(urgency, "normal"),
+            "-t", str(expire * 1000 if expire > 0 else 0),
+            "-r", str(NOTIF_ID),
+            "-a", "Aleph",
+            "Aleph Voice",
+            msg
+        ], timeout=2, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+def notif_clear():
+    """Dismiss the notification."""
+    try:
+        subprocess.run(["notify-send", "-r", str(NOTIF_ID), "-t", "1", "-a", "Aleph", "", ""],
+                      timeout=1, stderr=subprocess.DEVNULL)
+    except:
+        pass
 
 # ============================================================
 # Audio capture
@@ -51,7 +76,7 @@ def record_streaming(callback_chunk, chunk_secs=0.5):
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except:
         return
-    chunk_size = int(SAMPLE_RATE * chunk_secs) * 2  # 16-bit = 2 bytes
+    chunk_size = int(SAMPLE_RATE * chunk_secs) * 2
     try:
         while True:
             data = proc.stdout.read(chunk_size)
@@ -62,6 +87,36 @@ def record_streaming(callback_chunk, chunk_secs=0.5):
         proc.kill()
 
 # ============================================================
+# Audio cues
+# ============================================================
+
+def play_tone(freq=880, duration=0.15, amplitude=0.3):
+    """Play a sine wave tone through aplay."""
+    try:
+        rate = 22050
+        t = np.linspace(0, duration, int(rate * duration), False)
+        tone = (np.sin(2 * np.pi * freq * t) * amplitude).astype(np.float32)
+        pcm = (tone * 32767).astype(np.int16).tobytes()
+        proc = subprocess.Popen(["aplay", "-q", "-f", "S16_LE", "-r", str(rate),
+                                "-c", "1"], stdin=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL)
+        proc.stdin.write(pcm)
+        proc.stdin.close()
+        proc.wait()
+    except:
+        pass
+
+def play_activation_chime():
+    """Two-tone ascending chime."""
+    play_tone(660, 0.1, 0.2)
+    time.sleep(0.05)
+    play_tone(880, 0.15, 0.25)
+
+def play_done_chime():
+    """Single short tone."""
+    play_tone(440, 0.1, 0.15)
+
+# ============================================================
 # STT via moonshine
 # ============================================================
 
@@ -69,7 +124,6 @@ def transcribe(pcm_bytes):
     """Transcribe PCM audio, return text."""
     stt_script = os.path.join(SCRIPT_DIR, "aleph-stt.py")
     if not os.path.exists(stt_script):
-        # Check common paths
         for p in ["/usr/local/lib/aleph/aleph-stt.py",
                   os.path.expanduser("~/.local/bin/aleph-stt.py")]:
             if os.path.exists(p):
@@ -103,77 +157,34 @@ def speak(text):
                               "--stdin"], input=sentence.encode(), timeout=30,
                               stderr=subprocess.DEVNULL)
             except:
-                print(f"  {sentence}")
-
-def play_beep():
-    """Play a short beep to indicate listening mode."""
-    try:
-        dur = 0.15
-        rate = 22050
-        t = np.linspace(0, dur, int(rate * dur), False)
-        tone = (np.sin(2 * np.pi * 880 * t) * 0.3).astype(np.float32)
-        pcm = (tone * 32767).astype(np.int16).tobytes()
-        proc = subprocess.Popen(["aplay", "-q", "-f", "S16_LE", "-r", str(rate),
-                                "-c", "1"], stdin=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL)
-        proc.stdin.write(pcm)
-        proc.stdin.close()
-        proc.wait()
-    except:
-        print("\n  [beep]", end=" ", flush=True)
+                pass
 
 # ============================================================
 # Wake word detection
 # ============================================================
 
 def audio_energy(data):
-    """Compute RMS energy of PCM data."""
     samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
     return np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0
 
-ALEPH_EMOJI = "🔮"
-
-def flash(msg, emoji=ALEPH_EMOJI, duration=1.5):
-    """Display a flash notification that auto-clears."""
-    cols = shutil.get_terminal_size().columns
-    line = f"  {emoji}  {msg}"
-    sys.stdout.write(f"\r{line:<{cols}}")
-    sys.stdout.flush()
-    def clear():
-        time.sleep(duration)
-        sys.stdout.write(f"\r{'':<{cols}}")
-        sys.stdout.flush()
-    threading.Thread(target=clear, daemon=True).start()
-
 class WakeWordDetector:
-    """Detects 'aleph' wake word from mic stream."""
-    
     def __init__(self):
         self.buffer = b""
-        self.energy_threshold = 500  # Adjust based on mic sensitivity
+        self.energy_threshold = 500
         self.wake_detected = False
-        self.last_query = ""
-    
+
     def process_chunk(self, data):
-        """Process a PCM chunk. Returns True if wake word detected."""
         energy = audio_energy(data)
-        
         if energy < self.energy_threshold:
             self.buffer = b""
             return False
-        
         self.buffer += data
-        
-        # When we have ~2 seconds of audio with energy, transcribe
-        if len(self.buffer) >= SAMPLE_RATE * 2 * 2:  # 2s of 16-bit PCM
+        if len(self.buffer) >= SAMPLE_RATE * 2 * 2:
             text = transcribe(self.buffer)
             self.buffer = b""
-            
             if text:
-                # Check for wake words
                 for wake in WAKE_WORDS:
                     if wake in text:
-                        flash(f"Wake word: \"{text[:30]}\"")
                         self.wake_detected = True
                         return True
         return False
@@ -185,7 +196,7 @@ class WakeWordDetector:
 def ask_aleph(query):
     """Send query to Aleph API, return answer."""
     import urllib.request
-    body = json.dumps({"question": query, "top_k": 5}).encode()
+    body = json.dumps({"question": query, "top_k": 8}).encode()
     req = urllib.request.Request(f"{API_BASE}/api/ask", data=body,
                                 headers={"Content-Type": "application/json"})
     try:
@@ -196,29 +207,37 @@ def ask_aleph(query):
         return f"Error: {e}"
 
 def do_query():
-    """Record a query, process it, speak the answer."""
-    play_beep()
-    flash("Listening... speak now")
-    
+    """Record query, process, speak answer. Desktop popup stays throughout."""
+    notif("🎤 Listening... speak now")
+    play_activation_chime()
+
     audio = record_seconds(5)
     if len(audio) < 8000:
-        flash("No audio detected", duration=2)
+        notif("No audio detected", urgency="low")
+        time.sleep(2)
+        notif_clear()
         return
-    
-    flash("Transcribing...")
+
+    notif("🔄 Transcribing...")
     query = transcribe(audio)
-    
+
     if not query:
-        flash("Could not understand speech", duration=2)
+        notif("Could not understand speech. Try again.", urgency="low")
+        time.sleep(2)
+        notif_clear()
         return
-    
-    flash(f"Query: {query[:60]}", duration=2)
-    
+
+    notif(f"🤔 Thinking...")
     answer = ask_aleph(query)
-    flash(f"Aleph: {answer[:80]}...", duration=2)
-    
+
+    # Update popup with answer
+    preview = answer[:120] + ("..." if len(answer) > 120 else "")
+    notif(f"💬 {preview}")
+
     speak(answer)
-    flash("Ready for next query")
+    play_done_chime()
+    time.sleep(0.5)
+    notif_clear()
 
 # ============================================================
 # Main loop
@@ -226,7 +245,7 @@ def do_query():
 
 def wake_word_loop():
     """Background loop: detect wake word → query → loop."""
-    flash("Listening for 'Aleph'", duration=2)
+    notif("🎧 Listening for 'Jarvis' or 'Aleph'", urgency="low")
     
     detector = WakeWordDetector()
     
@@ -242,33 +261,32 @@ def wake_word_loop():
             if detector.wake_detected:
                 detector.wake_detected = False
                 do_query()
-                flash("Listening for 'Aleph'", duration=2)
+                notif("🎧 Listening for 'Jarvis' or 'Aleph'", urgency="low")
             time.sleep(0.1)
     except KeyboardInterrupt:
-        flash("Goodbye!", duration=2)
+        notif("Voice assistant stopped.", urgency="low")
+        notif_clear()
 
 def single_query():
-    """Single query mode (for aleph listen)."""
-    print("  🎤 Recording (5s)...", end=" ", flush=True)
+    """Single query mode."""
+    notif("🎤 Recording (5s)... speak now")
+    play_activation_chime()
     audio = record_seconds(5)
     if len(audio) < 8000:
-        print("No audio.")
-        # Fallback to stdin
+        notif_clear()
         query = input("\n  Type: ").strip()
         if query:
             answer = ask_aleph(query)
-            print(f"  Aleph: {answer}")
+            print(f"  {answer}")
             speak(answer)
         return
-    print("Transcribing...", end=" ", flush=True)
     query = transcribe(audio)
     if query:
-        print(f"\n  You: {query}")
+        notif("🤔 Thinking...")
         answer = ask_aleph(query)
-        print(f"  Aleph: {answer}")
+        print(f"  {answer}")
         speak(answer)
-    else:
-        print("No speech.")
+    notif_clear()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -191,20 +191,33 @@ async fn ask_handler(
         }));
     }
 
-    // Format context for LLM
-    let mut context_lines = Vec::new();
+    // Format context with time + category
+    let now = chrono::Utc::now();
+    let mut context_lines = vec![format!("Current time: {}. Today's date: {}.",
+        now.format("%H:%M"), now.format("%Y-%m-%d"))];
     for ev in &results {
         let start = chrono::DateTime::from_timestamp_millis(ev.start_time)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_else(|| "unknown".into());
-        let dur = if ev.duration_ms > 0 {
+            .map(|dt| dt.format("%H:%M").to_string())
+            .unwrap_or_else(|| "?".into());
+        let day = chrono::DateTime::from_timestamp_millis(ev.start_time)
+            .map(|dt| dt.format("%a").to_string())
+            .unwrap_or_else(|| "?".into());
+        let dur = if ev.duration_ms > 60_000 {
+            format!(" ({:.0}m)", ev.duration_ms as f64 / 60_000.0)
+        } else if ev.duration_ms > 0 {
             format!(" ({}s)", ev.duration_ms / 1000)
         } else {
             String::new()
         };
+        let _cat = ev.category.as_deref().unwrap_or("other");
+        let code = match (&ev.code_file, &ev.code_project) {
+            (Some(f), Some(p)) => format!(" [{}/{}]", p, f),
+            (Some(f), _) => format!(" [{}]", f),
+            _ => String::new(),
+        };
         context_lines.push(format!(
-            "- [{}] App: {}, Window: \"{}\"{}",
-            start, ev.app_name, ev.window_title, dur,
+            "- {} {}: {} — \"{}\"{}{}",
+            day, start, ev.app_name, ev.window_title, dur, code,
         ));
     }
 
@@ -212,11 +225,11 @@ async fn ask_handler(
     let conv_history = conversation_prompt();
     let use_conv = if conv_history.is_empty() { String::new() } else { conv_history };
 
-    let system_prompt = "You are Aleph, a desktop context assistant. \
-        Answer the user's question based on their desktop activity history. \
-        Be specific — mention app names, window titles, and timestamps. \
-        If the context doesn't contain enough information, say so. \
-        Keep answers concise and natural.";
+    let system_prompt = "You are Aleph, a desktop context assistant for the user. \
+        You track their computer activity. Answer questions about what they did, \
+        when, and for how long. Be specific about apps, window titles, times, and durations. \
+        If the data doesn't contain the answer, say so. Keep answers natural and concise. \
+        Today's date is provided in the context.";
 
     let user_prompt = format!(
         "{}\nMy desktop activity (most relevant first):\n{}\n\nQuestion: {}",
