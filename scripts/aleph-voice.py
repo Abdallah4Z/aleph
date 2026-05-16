@@ -49,6 +49,29 @@ def get_pa_source():
         pass
     return ""
 
+def mic_available():
+    """Quick check if a microphone is available and working."""
+    # 1. Check ALEPH_MIC env override
+    if ALEPH_MIC:
+        return True
+    # 2. Check ALSA capture devices
+    try:
+        r = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=3)
+        if r.stdout.strip():
+            return True
+    except:
+        pass
+    # 3. Check PulseAudio input sources
+    try:
+        r = subprocess.run(["pactl", "list", "sources", "short"],
+                          capture_output=True, text=True, timeout=3)
+        for line in r.stdout.split("\n"):
+            if "input" in line:
+                return True
+    except:
+        pass
+    return False
+
 def log(msg):
     """Status line that stays visible."""
     sys.stderr.write(f"  {msg}\n")
@@ -88,21 +111,25 @@ def record_seconds(duration, rate=SAMPLE_RATE):
         arecord_args += ["-D", dev]
     arecord_args += ["-d", str(duration), tmp]
     try:
-        subprocess.run(arecord_args, timeout=duration + 5, stderr=subprocess.DEVNULL)
+        subprocess.run(arecord_args, timeout=duration + 3, stderr=subprocess.DEVNULL)
         if os.path.exists(tmp):
             with open(tmp, "rb") as f:
                 d = f.read()
             os.remove(tmp)
-            return d[44:] if len(d) > 44 else d
+            if len(d) > 8000:
+                return d[44:] if len(d) > 44 else d
     except:
+        if os.path.exists(tmp):
+            os.remove(tmp)
         pass
+    # arecord failed, try parec with detected source
     pa_src = get_pa_source()
     parec_args = ["parec", "--rate=16000", "--channels=1", "--format=s16le",
-                  "--record", "--device", pa_src] if pa_src else \
-                ["parec", "--rate=16000", "--channels=1", "--format=s16le",
-                 "--record", "--duration", str(duration)]
+                  "--record", "--duration", str(duration)]
+    if pa_src:
+        parec_args += ["--device", pa_src]
     try:
-        result = subprocess.run(parec_args, capture_output=True, timeout=duration + 5)
+        result = subprocess.run(parec_args, capture_output=True, timeout=duration + 3)
         if result.stdout and len(result.stdout) > 8000:
             return result.stdout
     except:
@@ -110,44 +137,32 @@ def record_seconds(duration, rate=SAMPLE_RATE):
     return b""
 
 def record_streaming(callback, chunk_secs=0.5):
-    """Stream mic audio via arecord or parec."""
+    """Stream mic audio via arecord. Returns False if mic unavailable."""
     chunk = int(SAMPLE_RATE * chunk_secs) * 2
     dev = get_alsa_device()
     
-    # Try arecord first (most reliable for mic)
     arecord_args = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1"]
     if dev:
         arecord_args += ["-D", dev]
     try:
-        proc = subprocess.Popen(arecord_args,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(arecord_args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        # Read first chunk to verify it works
+        data = proc.stdout.read(chunk)
+        if not data or len(data) < chunk:
+            proc.kill()
+            return False
+        callback(data)
+        # Continue streaming
         while True:
             data = proc.stdout.read(chunk)
             if not data or len(data) < chunk:
                 break
             callback(data)
-        return
+        return True
     except:
         if proc:
             proc.kill()
-    
-    # Fallback to parec
-    pa_src = get_pa_source()
-    parec_args = ["parec", "--rate=16000", "--channels=1", "--format=s16le",
-                  "--record", "--latency-msec=100"]
-    if pa_src:
-        parec_args += ["--device", pa_src]
-    try:
-        proc = subprocess.Popen(parec_args,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        while True:
-            data = proc.stdout.read(chunk)
-            if not data or len(data) < chunk:
-                break
-            callback(data)
-    except:
-        if proc:
-            proc.kill()
+        return False
 
 # ============================================================
 # Audio cues
@@ -300,14 +315,29 @@ def do_query():
 # ============================================================
 
 def wake_word_loop():
+    """Background loop: detect wake word → query → loop."""
+    if not mic_available():
+        log("No microphone detected. Run 'aleph listen' and type your questions.")
+        notif("No microphone found", urgency="low")
+        time.sleep(3)
+        notif_clear()
+        return
+    
     log("Listening for 'Jarvis' or 'Aleph'...")
     notif("Say 'Jarvis' or 'Aleph'", urgency="low")
+    
     detector = WakeWordDetector()
     def cb(data):
         if detector.process(data):
             pass
-    t = threading.Thread(target=record_streaming, args=(cb,), daemon=True)
-    t.start()
+    ok = record_streaming(cb)
+    if not ok:
+        log("Microphone recording failed. Check your mic and try again.")
+        notif("Mic error", urgency="critical")
+        time.sleep(3)
+        notif_clear()
+        return
+    
     try:
         while True:
             if detector.detected:
@@ -329,14 +359,26 @@ if __name__ == "__main__":
         print(answer)
         speak(answer)
     elif args.once:
-        notif("🎤 Recording (5s)...")
-        play_chime()
-        audio = record_seconds(5)
-        query = transcribe(audio) if len(audio) >= 8000 else ""
+        if mic_available():
+            notif("🎤 Recording (5s)...")
+            play_chime()
+            audio = record_seconds(5)
+            if len(audio) >= 8000:
+                notif("🔄 Transcribing...")
+                query = transcribe(audio)
+                if query:
+                    answer = ask_aleph(query)
+                    print(answer)
+                    speak(answer)
+                notif_clear()
+                sys.exit(0)
+            notif_clear()
+        # Fallback: type query
+        log("Type your question (or press Enter to quit):")
+        query = input("  > ").strip()
         if query:
             answer = ask_aleph(query)
             print(answer)
             speak(answer)
-        notif_clear()
     else:
         wake_word_loop()
