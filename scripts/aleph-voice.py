@@ -50,24 +50,18 @@ def get_pa_source():
     return ""
 
 def mic_available():
-    """Quick check if a microphone is available and working."""
-    # 1. Check ALEPH_MIC env override
+    """Verify microphone actually works by reading a short sample."""
     if ALEPH_MIC:
         return True
-    # 2. Check ALSA capture devices
+    dev = get_alsa_device()
+    arecord_args = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
+                    "-d", "1", "/dev/null"]
+    if dev:
+        arecord_args = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
+                        "-D", dev, "-d", "1", "/dev/null"]
     try:
-        r = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=3)
-        if r.stdout.strip():
-            return True
-    except:
-        pass
-    # 3. Check PulseAudio input sources
-    try:
-        r = subprocess.run(["pactl", "list", "sources", "short"],
-                          capture_output=True, text=True, timeout=3)
-        for line in r.stdout.split("\n"):
-            if "input" in line:
-                return True
+        r = subprocess.run(arecord_args, timeout=3, stderr=subprocess.DEVNULL)
+        return r.returncode == 0
     except:
         pass
     return False

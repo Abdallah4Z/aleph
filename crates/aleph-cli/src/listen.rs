@@ -18,8 +18,16 @@ fn voice_script_path() -> String {
 }
 
 fn mic_available() -> bool {
-    Command::new("arecord").args(["-l"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .status().map(|s| s.success()).unwrap_or(false)
+    // Try to actually record a short sample to verify the mic works
+    let tmp = std::env::temp_dir().join("aleph_mic_test.wav");
+    let result = Command::new("arecord")
+        .args(["-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
+               "-d", "1", tmp.to_str().unwrap()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let _ = std::fs::remove_file(&tmp);
+    result.map(|s| s.success()).unwrap_or(false)
 }
 
 pub fn run_listen_loop() -> Result<()> {
