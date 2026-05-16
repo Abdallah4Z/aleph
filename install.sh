@@ -56,7 +56,7 @@ case "$(uname -s)" in
     if command -v apt-get &>/dev/null; then
       info "Detected apt-based distro (Debian/Ubuntu)"
       sudo apt-get update -qq || warn "apt update failed, continuing..."
-      sudo apt-get install -y -qq libxcb1-dev libdbus-1-dev libxdo-dev libx11-dev protobuf-compiler espeak-ng alsa-utils pulseaudio-utils python3 python3-pip python3-venv || \
+      sudo apt-get install -y -qq libxcb1-dev libdbus-1-dev libxdo-dev libx11-dev protobuf-compiler espeak-ng alsa-utils pulseaudio-utils libnotify-bin python3 python3-pip python3-venv || \
         fail "Failed to install system dependencies."
       log "System dependencies installed"
     elif command -v pacman &>/dev/null; then

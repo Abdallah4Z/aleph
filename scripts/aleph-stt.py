@@ -10,7 +10,6 @@ SAMPLE_RATE = 16000
 def load_model():
     if not os.path.exists(MODEL_PATH):
         # Download on first use
-        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
         model = AutoModelForSpeechSeq2Seq.from_pretrained("UsefulSensors/moonshine-tiny")
         processor = AutoProcessor.from_pretrained("UsefulSensors/moonshine-tiny")
         model.save_pretrained(MODEL_PATH)
