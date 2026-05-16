@@ -129,15 +129,39 @@ def transcribe(pcm_bytes):
 # ============================================================
 
 def speak(text):
-    for s in [s.strip() for s in text.replace("!", ".").replace("?", ".").split(".") if s.strip()]:
-        for cmd in [["espeak-ng", "-v", "en-us", "-s", "155", "-p", "50", "--stdin"],
-                     ["espeak", "-v", "en-us", "-s", "155", "--stdin"]]:
-            try:
-                subprocess.run(cmd, input=s.encode(), timeout=30, stderr=subprocess.DEVNULL)
-                time.sleep(0.05)
+    """Speak text using Kitten TTS."""
+    tts = os.path.join(SCRIPT_DIR, "aleph-tts.py")
+    if not os.path.exists(tts):
+        # Fallback to espeak
+        for s in [s.strip() for s in text.replace("!", ".").replace("?", ".").split(".") if s.strip()]:
+            for cmd in [["espeak-ng", "-v", "en-us", "-s", "155", "-p", "50", "--stdin"],
+                         ["espeak", "-v", "en-us", "-s", "155", "--stdin"]]:
+                try:
+                    subprocess.run(cmd, input=s.encode(), timeout=30, stderr=subprocess.DEVNULL)
+                    time.sleep(0.05)
+                    break
+                except:
+                    continue
+        return
+    try:
+        proc = subprocess.Popen(["python3", tts, "--text", text, "--stream"],
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        # Read length-prefixed PCM chunks and play via aplay
+        player = subprocess.Popen(["aplay", "-q", "-f", "S16_LE", "-r", "24000", "-c", "1"],
+                                 stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        while True:
+            header = proc.stdout.read(4)
+            if not header or len(header) < 4:
                 break
-            except:
-                continue
+            n_samples = struct.unpack('<I', header)[0]
+            pcm = proc.stdout.read(n_samples * 2)  # 16-bit
+            if not pcm:
+                break
+            player.stdin.write(pcm)
+        player.stdin.close()
+        player.wait()
+    except:
+        pass
 
 # ============================================================
 # Wake word detection
