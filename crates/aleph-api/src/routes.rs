@@ -121,18 +121,72 @@ async fn query_handler(
 // Ask handler — keyword search + LLM answer with sources
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Conversation memory — rolling buffer of last 5 Q&A pairs
+// ---------------------------------------------------------------------------
+
+use std::collections::VecDeque;
+use std::sync::Mutex;
+
+static CONVERSATION: std::sync::LazyLock<Mutex<VecDeque<(String, String)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(VecDeque::with_capacity(5)));
+
+fn push_conversation(q: &str, a: &str) {
+    let mut conv = CONVERSATION.lock().unwrap();
+    if conv.len() >= 5 {
+        conv.pop_front();
+    }
+    conv.push_back((q.to_string(), a.to_string()));
+}
+
+fn conversation_prompt() -> String {
+    let conv = CONVERSATION.lock().unwrap();
+    if conv.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec!["Previous conversation:".to_string()];
+    for (q, a) in conv.iter() {
+        lines.push(format!("  User: {}", q));
+        lines.push(format!("  You: {}", a));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// Ask handler
+// ---------------------------------------------------------------------------
+
 async fn ask_handler(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AskRequest>,
 ) -> Result<Json<AskResponse>, StatusCode> {
-    let results = state.db.keyword_search(&req.question, req.top_k as i64).await.map_err(|e| {
+    // Try keyword search
+    let mut results = state.db.keyword_search(&req.question, req.top_k as i64).await.map_err(|e| {
         error!("Keyword search failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    // If no keyword matches, fall back to recent events (last 24h)
     if results.is_empty() {
+        let recent = state.db.get_recent_events(10).await.map_err(|e| {
+            error!("Failed to fetch recent events: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        // Filter to today
+        let today_start = chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0)
+            .unwrap().and_utc().timestamp_millis();
+        results = recent.into_iter()
+            .filter(|e| e.start_time >= today_start)
+            .take(8)
+            .collect();
+    }
+
+    if results.is_empty() {
+        let answer = "I don't have any desktop activity recorded yet. Start using your computer and I'll capture it.";
+        push_conversation(&req.question, answer);
         return Ok(Json(AskResponse {
-            answer: "No matching context found in your desktop history.".into(),
+            answer: answer.into(),
             sources: vec![],
         }));
     }
@@ -149,29 +203,30 @@ async fn ask_handler(
             String::new()
         };
         context_lines.push(format!(
-            "- [{}] App: {}, Window: \"{}\"{}{}",
+            "- [{}] App: {}, Window: \"{}\"{}",
             start, ev.app_name, ev.window_title, dur,
-            if ev.source_type == "vision" { "" } else { "" }
         ));
     }
 
     let context_text = context_lines.join("\n");
+    let conv_history = conversation_prompt();
+    let use_conv = if conv_history.is_empty() { String::new() } else { conv_history };
+
     let system_prompt = "You are Aleph, a desktop context assistant. \
-        Below is the user's recent desktop activity history. \
-        Answer the user's question based ONLY on this context. \
+        Answer the user's question based on their desktop activity history. \
         Be specific — mention app names, window titles, and timestamps. \
-        If the context doesn't contain enough information, say so.";
+        If the context doesn't contain enough information, say so. \
+        Keep answers concise and natural.";
 
     let user_prompt = format!(
-        "My desktop activity (most relevant first):\n{}\n\nQuestion: {}",
-        context_text, req.question
+        "{}\nMy desktop activity (most relevant first):\n{}\n\nQuestion: {}",
+        use_conv, context_text, req.question
     );
 
     let config = Config::global();
     let answer = match aleph_core::llm::ask_llm(&config, system_prompt, &user_prompt) {
         Ok(a) => a,
         Err(e) => {
-            // Fallback to just returning the raw context
             let lines: Vec<String> = results.iter().map(|ev| {
                 let start = chrono::DateTime::from_timestamp_millis(ev.start_time)
                     .map(|dt| dt.format("%H:%M").to_string()).unwrap_or_default();
@@ -180,6 +235,8 @@ async fn ask_handler(
             format!("LLM unavailable ({}). Raw context:\n{}", e, lines.join("\n"))
         }
     };
+
+    push_conversation(&req.question, &answer);
 
     let sources: Vec<SourceMetadata> = results.into_iter().map(|ev| SourceMetadata {
         id: ev.id,

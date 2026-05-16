@@ -9,7 +9,7 @@ Usage:
   python3 aleph-voice.py --once       # single query (for aleph listen command)
   python3 aleph-voice.py --text "..." # process text directly
 """
-import sys, os, json, time, struct, argparse, subprocess, threading
+import sys, os, json, time, struct, argparse, subprocess, threading, shutil, re
 import numpy as np
 
 SAMPLE_RATE = 16000
@@ -131,6 +131,20 @@ def audio_energy(data):
     samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
     return np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0
 
+ALEPH_EMOJI = "🔮"
+
+def flash(msg, emoji=ALEPH_EMOJI, duration=1.5):
+    """Display a flash notification that auto-clears."""
+    cols = shutil.get_terminal_size().columns
+    line = f"  {emoji}  {msg}"
+    sys.stdout.write(f"\r{line:<{cols}}")
+    sys.stdout.flush()
+    def clear():
+        time.sleep(duration)
+        sys.stdout.write(f"\r{'':<{cols}}")
+        sys.stdout.flush()
+    threading.Thread(target=clear, daemon=True).start()
+
 class WakeWordDetector:
     """Detects 'aleph' wake word from mic stream."""
     
@@ -159,7 +173,7 @@ class WakeWordDetector:
                 # Check for wake words
                 for wake in WAKE_WORDS:
                     if wake in text:
-                        print(f"\n  🔔 Wake word detected: \"{text[:50]}\"")
+                        flash(f"Wake word: \"{text[:30]}\"")
                         self.wake_detected = True
                         return True
         return False
@@ -184,29 +198,27 @@ def ask_aleph(query):
 def do_query():
     """Record a query, process it, speak the answer."""
     play_beep()
-    print("\n  🎤 Recording query (5s)...", end=" ", flush=True)
+    flash("Listening... speak now")
     
     audio = record_seconds(5)
     if len(audio) < 8000:
-        print("No audio detected.")
+        flash("No audio detected", duration=2)
         return
     
-    print("Transcribing...", end=" ", flush=True)
+    flash("Transcribing...")
     query = transcribe(audio)
     
     if not query:
-        print("No speech recognized.")
+        flash("Could not understand speech", duration=2)
         return
     
-    print(f"You: {query}")
-    print("Thinking...", end=" ", flush=True)
+    flash(f"Query: {query[:60]}", duration=2)
     
     answer = ask_aleph(query)
-    print(f"Aleph: {answer[:100]}{'...' if len(answer)>100 else ''}")
+    flash(f"Aleph: {answer[:80]}...", duration=2)
     
-    print("Speaking...", end=" ", flush=True)
     speak(answer)
-    print(" Done")
+    flash("Ready for next query")
 
 # ============================================================
 # Main loop
@@ -214,18 +226,14 @@ def do_query():
 
 def wake_word_loop():
     """Background loop: detect wake word → query → loop."""
-    print("  Aleph Voice Assistant — Listening for wake word...")
-    print("  Say \"Aleph\" or \"Okay Aleph\" to start")
-    print("  Press Ctrl+C to exit\n")
+    flash("Listening for 'Aleph'", duration=2)
     
     detector = WakeWordDetector()
     
     def chunk_callback(data):
         if detector.process_chunk(data):
-            # Wake word detected — do query in main thread
             pass
     
-    # Start streaming in a background thread
     stream_thread = threading.Thread(target=record_streaming, args=(chunk_callback,), daemon=True)
     stream_thread.start()
     
@@ -234,10 +242,10 @@ def wake_word_loop():
             if detector.wake_detected:
                 detector.wake_detected = False
                 do_query()
-                print("\n  Listening for wake word...")
+                flash("Listening for 'Aleph'", duration=2)
             time.sleep(0.1)
     except KeyboardInterrupt:
-        print("\n  Goodbye!")
+        flash("Goodbye!", duration=2)
 
 def single_query():
     """Single query mode (for aleph listen)."""
