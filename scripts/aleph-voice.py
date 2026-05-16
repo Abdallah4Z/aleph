@@ -13,6 +13,42 @@ WAKE_WORDS = ["jarvis", "hey jarvis", "hi jarvis", "aleph", "okay aleph", "hey a
 API_BASE = "http://127.0.0.1:2198"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Audio source: auto-detect, override with ALEPH_MIC env var
+ALEPH_MIC = os.environ.get("ALEPH_MIC", "")
+
+def get_alsa_device():
+    """Return the ALSA device for the mic, or empty string for default."""
+    if ALEPH_MIC:
+        return ALEPH_MIC
+    # Try to find a capture device
+    try:
+        result = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=5)
+        for line in result.stdout.split("\n"):
+            if "card" in line and "device" in line:
+                # Parse card N, device N
+                import re
+                m = re.search(r"card (\d+).*device (\d+)", line)
+                if m:
+                    return f"hw:{m.group(1)},{m.group(2)}"
+    except:
+        pass
+    return ""
+
+def get_pa_source():
+    """Return the PulseAudio source name for the mic."""
+    if ALEPH_MIC:
+        return ALEPH_MIC
+    try:
+        result = subprocess.run(["pactl", "list", "sources", "short"],
+                               capture_output=True, text=True, timeout=5)
+        for line in result.stdout.split("\n"):
+            parts = line.strip().split()
+            if len(parts) >= 2 and "input" in parts[1]:
+                return parts[1]
+    except:
+        pass
+    return ""
+
 def log(msg):
     """Status line that stays visible."""
     sys.stderr.write(f"  {msg}\n")
@@ -46,42 +82,72 @@ def notif_clear():
 
 def record_seconds(duration, rate=SAMPLE_RATE):
     tmp = f"/tmp/aleph_voice_{int(time.time())}.wav"
-    for cmd, args in [
-        (["arecord", "-q", "-f", "S16_LE", "-r", str(rate), "-c", "1", "-d", str(duration), tmp], True),
-        (["parec", "--rate=16000", "--channels=1", "--format=s16le", "--record", "--duration", str(duration)], False),
-    ]:
-        try:
-            if cmd[0] == "arecord":
-                subprocess.run(cmd, timeout=duration + 5, stderr=subprocess.DEVNULL)
-                if os.path.exists(tmp):
-                    with open(tmp, "rb") as f:
-                        d = f.read()
-                    os.remove(tmp)
-                    return d[44:] if len(d) > 44 else d
-            else:
-                result = subprocess.run(cmd, capture_output=True, timeout=duration + 5)
-                if result.stdout and len(result.stdout) > 8000:
-                    return result.stdout
-        except:
-            continue
+    dev = get_alsa_device()
+    arecord_args = ["arecord", "-q", "-f", "S16_LE", "-r", str(rate), "-c", "1"]
+    if dev:
+        arecord_args += ["-D", dev]
+    arecord_args += ["-d", str(duration), tmp]
+    try:
+        subprocess.run(arecord_args, timeout=duration + 5, stderr=subprocess.DEVNULL)
+        if os.path.exists(tmp):
+            with open(tmp, "rb") as f:
+                d = f.read()
+            os.remove(tmp)
+            return d[44:] if len(d) > 44 else d
+    except:
+        pass
+    pa_src = get_pa_source()
+    parec_args = ["parec", "--rate=16000", "--channels=1", "--format=s16le",
+                  "--record", "--device", pa_src] if pa_src else \
+                ["parec", "--rate=16000", "--channels=1", "--format=s16le",
+                 "--record", "--duration", str(duration)]
+    try:
+        result = subprocess.run(parec_args, capture_output=True, timeout=duration + 5)
+        if result.stdout and len(result.stdout) > 8000:
+            return result.stdout
+    except:
+        pass
     return b""
 
 def record_streaming(callback, chunk_secs=0.5):
-    """Stream mic audio via parec."""
+    """Stream mic audio via arecord or parec."""
     chunk = int(SAMPLE_RATE * chunk_secs) * 2
+    dev = get_alsa_device()
+    
+    # Try arecord first (most reliable for mic)
+    arecord_args = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1"]
+    if dev:
+        arecord_args += ["-D", dev]
     try:
-        proc = subprocess.Popen(["parec", "--rate=16000", "--channels=1", "--format=s16le", "--record"],
+        proc = subprocess.Popen(arecord_args,
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    except:
+        while True:
+            data = proc.stdout.read(chunk)
+            if not data or len(data) < chunk:
+                break
+            callback(data)
         return
+    except:
+        if proc:
+            proc.kill()
+    
+    # Fallback to parec
+    pa_src = get_pa_source()
+    parec_args = ["parec", "--rate=16000", "--channels=1", "--format=s16le",
+                  "--record", "--latency-msec=100"]
+    if pa_src:
+        parec_args += ["--device", pa_src]
     try:
+        proc = subprocess.Popen(parec_args,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         while True:
             data = proc.stdout.read(chunk)
             if not data or len(data) < chunk:
                 break
             callback(data)
     except:
-        proc.kill()
+        if proc:
+            proc.kill()
 
 # ============================================================
 # Audio cues
